@@ -1,4 +1,4 @@
 <resources>
-    <string name="runtime_status">Node %1$s · SQLite · %2$s</string>
+    <string name="runtime_status">Node %1$s · SQLite · %2$s · v%3$s</string>
     <string name="runtime_unavailable">Runtime unavailable</string>
 </resources>

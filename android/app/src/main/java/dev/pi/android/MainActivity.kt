@@ -163,7 +163,7 @@ class MainActivity : Activity() {
                 currentModel = event.getString("model")
                 val available = event.getJSONArray("models")
                 modelIds = (0 until available.length()).map { available.getString(it) }
-                status.text = getString(R.string.runtime_status, event.getString("node"), currentModel) + " · v$version"
+                status.text = getString(R.string.runtime_status, event.getString("node"), currentModel, version)
                 login.text = if (signingIn) "Cancel sign-in" else if (authenticated) "ChatGPT connected" else "Sign in with ChatGPT"
                 login.isEnabled = true
                 model.isEnabled = !busy && !signingIn
