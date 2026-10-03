@@ -9,6 +9,7 @@ import { openaiChatGPTOAuth } from "pi-source/auth/oauth/openai-chatgpt";
 import { OPENAI_MODELS } from "pi-source/providers/openai.models";
 import { AndroidCredentialStore, type CredentialHost } from "./credentials.ts";
 import { loginError } from "./auth-errors.ts";
+import { installAndroidDns, type AndroidDnsHost } from "./android-dns.ts";
 
 export interface NativeHost extends CredentialHost {
   emit(json: string): void;
@@ -164,14 +165,16 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
 }
 
 /** Synchronous entry point for Javet. All commands and callbacks stay on its worker thread. */
-export function start(host: NativeHost, directory: string) {
+export function start(host: NativeHost & AndroidDnsHost, directory: string) {
+  const dns = installAndroidDns(host);
   const ready = createApp(host, directory);
   void ready.catch(error => host.emit(JSON.stringify({ type: "fatal", message: safeError(error) })));
   return {
+    dnsResult(json: string) { dns.result(json); },
     command(json: string) {
       void ready.then(app => app.command(JSON.parse(json))).catch(error =>
         host.emit(JSON.stringify({ type: "error", message: safeError(error) })));
     },
-    async close() { await (await ready).close(); },
+    async close() { try { await (await ready).close(); } finally { dns.close(); } },
   };
 }

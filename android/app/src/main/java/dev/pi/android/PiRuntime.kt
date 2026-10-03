@@ -10,13 +10,20 @@ import com.caoccao.javet.interop.V8Host
 import com.caoccao.javet.values.reference.V8ValueObject
 import org.json.JSONObject
 import java.io.File
+import java.net.InetAddress
+import java.net.Inet4Address
+import java.net.UnknownHostException
+import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import org.json.JSONArray
 
 /** Application-owned worker: opening a browser or rotating the activity keeps the runtime alive. */
 class PiRuntime(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private val commands = LinkedBlockingQueue<String>()
+    private val dnsResults = LinkedBlockingQueue<String>()
+    private val dnsExecutor = Executors.newFixedThreadPool(2)
     private val credentials = SecureCredentials(context)
     private val listeners = linkedSetOf<(JSONObject) -> Unit>()
     private var latestState: JSONObject? = null
@@ -53,12 +60,30 @@ class PiRuntime(private val context: Context) {
         }
     }
 
-    // Annotated methods expose only these four functions, rather than general JVM access.
+    // Only explicit bridge methods are exposed to Node, not general JVM access.
     inner class NativeHost {
         @V8Function fun emit(json: String) { publish(json) }
         @V8Function fun readCredential(): String = credentials.read()
         @V8Function fun writeCredential(value: String) { credentials.write(value) }
         @V8Function fun deviceId(): String = credentials.deviceId()
+        @V8Function fun resolveHost(id: Int, hostname: String) {
+            dnsExecutor.execute {
+                val result = JSONObject().put("id", id)
+                try {
+                    // Uses Android's active network resolver, including VPN and Private DNS.
+                    val addresses = JSONArray()
+                    InetAddress.getAllByName(hostname).forEach { address ->
+                        addresses.put(JSONObject().put("address", address.hostAddress)
+                            .put("family", if (address is Inet4Address) 4 else 6))
+                    }
+                    result.put("addresses", addresses)
+                } catch (_: UnknownHostException) { result.put("code", "ENOTFOUND") }
+                catch (_: SecurityException) { result.put("code", "EACCES") }
+                catch (_: Exception) { result.put("code", "EAI_AGAIN") }
+                // V8 may only be called on its owner thread; no UI events carry resolver results.
+                dnsResults.offer(result.toString())
+            }
+        }
     }
 
     private fun runNode() {
@@ -80,6 +105,7 @@ class PiRuntime(private val context: Context) {
                     while (!Thread.currentThread().isInterrupted) {
                         val command = commands.poll(10, TimeUnit.MILLISECONDS)
                         if (command != null) app.invokeVoid("command", command)
+                        dnsResults.poll()?.let { app.invokeVoid("dnsResult", it) }
                         node.await(V8AwaitMode.RunNoWait)
                     }
                 }
@@ -88,6 +114,8 @@ class PiRuntime(private val context: Context) {
             // Never log JS source, callback URLs, or credentials from runtime exceptions.
             publish(JSONObject().put("type", "fatal")
                 .put("message", "Embedded Node could not run (${error.javaClass.simpleName}). This device/runtime combination needs diagnosis.").toString())
+        } finally {
+            dnsExecutor.shutdownNow()
         }
     }
 }

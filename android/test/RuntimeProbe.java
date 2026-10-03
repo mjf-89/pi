@@ -4,14 +4,29 @@ import com.caoccao.javet.enums.V8AwaitMode;
 import com.caoccao.javet.annotations.V8Function;
 import com.caoccao.javet.values.reference.V8ValueObject;
 import java.nio.file.Path;
+import java.net.InetAddress;
+import java.net.Inet4Address;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 public final class RuntimeProbe {
     public static final class NativeHost {
         String latest = "";
+        final ConcurrentLinkedQueue<String> dnsResults = new ConcurrentLinkedQueue<>();
+        int dnsLookups = 0;
         @V8Function public void emit(String json) { latest = json; }
         @V8Function public String readCredential() { return ""; }
         @V8Function public void writeCredential(String value) { throw new AssertionError("No real credentials in this probe"); }
         @V8Function public String deviceId() { return "a17d00f0-7384-4b4a-bdac-667d1d137e48"; }
+        @V8Function public void resolveHost(int id, String hostname) throws Exception {
+            dnsLookups++;
+            StringBuilder json = new StringBuilder("{\"id\":" + id + ",\"addresses\":[");
+            for (InetAddress address : InetAddress.getAllByName(hostname)) {
+                if (json.charAt(json.length() - 1) != '[') json.append(',');
+                json.append("{\"address\":\"").append(address.getHostAddress()).append("\",\"family\":")
+                    .append(address instanceof Inet4Address ? 4 : 6).append('}');
+            }
+            dnsResults.offer(json.append("]}").toString());
+        }
     }
     public static void main(String[] args) throws Exception {
         try (NodeRuntime runtime = V8Host.getNodeI18nInstance().createV8Runtime()) {
@@ -32,19 +47,26 @@ public final class RuntimeProbe {
             runtime.getExecutor(Path.of("test/embedded-smoke.cjs").toAbsolutePath().toFile()).executeVoid();
             deadline = System.currentTimeMillis() + 30000;
             while (!runtime.getGlobalObject().getBoolean("probeFinished") && System.currentTimeMillis() < deadline) {
+                String result;
+                while ((result = host.dnsResults.poll()) != null) {
+                    try (V8ValueObject app = runtime.getGlobalObject().get("dnsProbeApp")) {
+                        app.invokeVoid("dnsResult", result);
+                    }
+                }
                 runtime.await(V8AwaitMode.RunNoWait);
                 Thread.sleep(5);
             }
             if (!runtime.getGlobalObject().getBoolean("probeFinished")) throw new AssertionError("Pi probe timed out");
             String failure = runtime.getGlobalObject().getString("probeFailure");
             if (!failure.isEmpty()) throw new AssertionError(failure);
+            if (host.dnsLookups == 0) throw new AssertionError("HTTP fetch did not use the Java DNS bridge");
             if (!host.latest.contains("Answer from embedded Node.")) throw new AssertionError("Conversation was not restored: " + host.latest);
             try (V8ValueObject nativeObject = runtime.getGlobalObject().get("nativeHost")) {
                 nativeObject.unbind(host);
                 runtime.getGlobalObject().delete("nativeHost");
             }
             runtime.lowMemoryNotification();
-            System.out.println("Pi SQLite chat, Java callbacks, and conversation restore passed inside Javet.");
+            System.out.println("Pi SQLite chat, Java DNS callbacks, HTTP fetch, and conversation restore passed inside Javet.");
         }
     }
 }

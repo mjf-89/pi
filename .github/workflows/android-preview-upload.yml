@@ -1,8 +1,8 @@
-name: Publish Android sign-in diagnostics
+name: Publish Android DNS fix
 
 on:
   push:
-    branches: [release/android-poc-diagnostics]
+    branches: [release/android-poc-dns-fix]
 
 permissions:
   contents: write
@@ -37,22 +37,27 @@ jobs:
         run: |
           npm run bundle
           npm run check
-          node --test test/runtime.test.mjs
-          ./gradlew --no-daemon -Pdiagnostic=true :app:assembleDebug :app:lintDebug
+          node --test test/*.test.mjs
+          mkdir -p /tmp/javet-probe
+          curl -fsSL https://repo.maven.apache.org/maven2/com/caoccao/javet/javet/6.0.1/javet-6.0.1.jar -o /tmp/javet-probe/javet.jar
+          curl -fsSL https://repo.maven.apache.org/maven2/com/caoccao/javet/javet-node-linux-x86_64-i18n/6.0.1/javet-node-linux-x86_64-i18n-6.0.1.jar -o /tmp/javet-probe/node.jar
+          javac -cp /tmp/javet-probe/javet.jar -d /tmp/javet-probe test/RuntimeProbe.java
+          java -cp /tmp/javet-probe:/tmp/javet-probe/javet.jar:/tmp/javet-probe/node.jar RuntimeProbe
+          ./gradlew --no-daemon :app:assembleDebug :app:lintDebug
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
       - name: Attach APK and update release notes
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk pi-android-diagnostics-arm64.apk
-          sha256sum pi-android-diagnostics-arm64.apk > SHA256SUMS
+          cp android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk pi-android-poc-arm64.apk
+          sha256sum pi-android-poc-arm64.apk > SHA256SUMS
           cat > /tmp/preview-notes.md <<'NOTES'
-          This diagnostic preview identifies which step fails after browser sign-in: callback validation, token exchange, token response validation, or encrypted credential storage. It removes the misleading generic subscription error. The underlying device failure has not yet been identified.
+          Fixes the embedded Node DNS lookup path responsible for ENOTFOUND after browser sign-in. Hostname lookups now use Android's system resolver, including its active network, VPN and Private DNS configuration. The same bridge covers token refresh and chat requests. TLS hostname and certificate verification remain enabled.
 
-          Download `pi-android-diagnostics-arm64.apk` for ARM64 Android phones, including Nothing devices. Requires Android 8.0 or newer. It installs separately as **Pi Durable Diagnostics**, so the original app and its data remain available. Try sign-in and report the new error message; never share callback URLs or tokens.
+          Download `pi-android-poc-arm64.apk` for ARM64 Android phones, including Nothing devices. Requires Android 8.0 or newer. This is the regular **Pi Durable** app. The old 0.1.0 preview was signed with a disposable CI debug key: uninstall that original app before installing this build. Uninstalling clears that app's local data. The separate Diagnostics app can remain installed.
 
-          Validation passed: APK compilation, Android lint, TypeScript checks, runtime tests (including token-response and native-storage error isolation), and APK signature verification. Live ChatGPT login on Android still needs device verification.
+          Validation passed: APK compilation, Android lint, TypeScript checks, runtime and DNS tests, a real HTTP fetch through the Java DNS bridge inside embedded Javet, and APK signature verification. HTTPS tests verify that mismatched certificates are rejected. Live ChatGPT login on the affected phone still needs device verification.
 
           The APK was built on GitHub Actions. SHA-256 is recorded in the attached SHA256SUMS file.
           NOTES
-          gh release create android-poc-diagnostics-0.1.1 pi-android-diagnostics-arm64.apk SHA256SUMS --repo mjf-89/pi --target "$GITHUB_SHA" --prerelease --latest=false --title 'Android sign-in diagnostics 0.1.1' --notes-file /tmp/preview-notes.md
+          gh release create android-poc-preview-0.1.2 pi-android-poc-arm64.apk SHA256SUMS --repo mjf-89/pi --target "$GITHUB_SHA" --prerelease --latest=false --title 'Android PoC 0.1.2 — DNS fix' --notes-file /tmp/preview-notes.md

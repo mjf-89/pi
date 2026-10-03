@@ -1,5 +1,6 @@
 // Loaded by RuntimeProbe.java inside Javet, not by the system node executable.
-const { createApp } = require('../app/src/main/assets/pi-runtime.cjs');
+const { createApp, start } = require('../app/src/main/assets/pi-runtime.cjs');
+const http = require('node:http');
 const { fauxProvider, fauxAssistantMessage } = require('../node_modules/@earendil-works/pi-ai/dist/index.js');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -12,6 +13,18 @@ globalThis.probeFailure = '';
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-javet-'));
   let app;
   try {
+    // Exercise the production startup bridge and a real HTTP request using Java's resolver.
+    globalThis.dnsProbeApp = start(globalThis.nativeHost, directory);
+    const server = http.createServer((_request, response) => response.end('resolved through Java'));
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const response = await fetch(`http://localhost:${server.address().port}/`);
+      assert.equal(await response.text(), 'resolved through Java');
+    } finally {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+      await globalThis.dnsProbeApp.close();
+    }
     // Exercise the production provider initialization and the exact native callback binding.
     app = await createApp(globalThis.nativeHost, directory);
     assert.ok(fs.existsSync(path.join(directory, 'conversation.sqlite')));

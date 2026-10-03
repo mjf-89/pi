@@ -54,7 +54,7 @@ cd android
 npm ci --ignore-scripts
 npm run bundle
 npm run check
-node --test test/runtime.test.mjs
+node --test test/*.test.mjs
 ./gradlew :app:assembleDebug :app:lintDebug
 ```
 
@@ -77,6 +77,9 @@ machines should use the general build instructions above.
   callbacks, a fake model response, SQLite and conversation restore. This checks
   the embedding bridge, separately from the host Node tests.
 - Kotlin/Android APK compilation, TypeScript checking and Android lint.
+- DNS bridging: actual HTTP fetch through the resolver bridge, IPv4/IPv6 ordering,
+  resolver failure and cleanup, and HTTPS certificate/hostname verification.
+  The Javet probe also exercises Java DNS callbacks and a real HTTP fetch.
 
 The Android checks above pass. The broader repository's `npm run check` currently
 fails at `packages/ai/test/stream.test.ts:705`: the Cloudflare fixture requests
@@ -96,6 +99,7 @@ probe. It needs the Maven artifacts `com.caoccao.javet:javet:6.0.1` and
 
 - `runtime/index.ts`: provider, OAuth, durable harness, SQLite and command bridge.
 - `runtime/credentials.ts`: serialized credential updates delegated to Kotlin.
+- `runtime/android-dns.ts`: Node hostname lookup bridge to Android's system DNS.
 - `app/src/main/java/dev/pi/android/`: UI, Javet worker, Android Keystore storage.
 - `scripts/bundle.mjs`: reproducible source bundle; generated assets are ignored.
 
@@ -113,6 +117,13 @@ retained, but real token refresh needs device validation.
 
 The native runtime is comparatively large. APKs are split by ABI to avoid
 shipping both native libraries to a phone. ARM64 ELF segments have 16 KB alignment.
+
+Node hostname lookups use Android's `InetAddress` resolver on background workers.
+Results return to the owning Javet thread before invoking JavaScript callbacks.
+This avoids the embedded native resolver's `ENOTFOUND` failures after browser
+sign-in and uses Android's active network, VPN and Private DNS settings. OAuth
+exchange, refresh and API calls keep their original TLS hostname and certificate
+verification; the app does not hardcode DNS servers or service IP addresses.
 
 ## Upstream sources
 
