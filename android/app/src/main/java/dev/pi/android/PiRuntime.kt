@@ -29,6 +29,8 @@ class PiRuntime(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private val commands = LinkedBlockingQueue<String>()
     private val dnsResults = LinkedBlockingQueue<String>()
+    private val deviceResults = LinkedBlockingQueue<String>()
+    private val automation get() = (context.applicationContext as PiApplication).automation
     private val dnsExecutor = Executors.newFixedThreadPool(2)
     private val diagnostics = DiagnosticLog(File(context.filesDir, "diagnostics/events.jsonl"))
     private val credentials = SecureCredentials(context)
@@ -56,6 +58,13 @@ class PiRuntime(private val context: Context) {
     fun browserUrl(): String? = authUrl
     fun detach(listener: (JSONObject) -> Unit) { listeners.remove(listener) }
     fun send(command: JSONObject) { commands.offer(command.toString()) }
+    fun deviceEvent(event: String, action: String = "", result: String = "") {
+        diagnostics.record(event, JSONObject().put("action", action).put("result", result))
+    }
+    fun deviceFailure(message: String) {
+        deviceEvent("device.failure", result = "failed")
+        publish(JSONObject().put("type", "error").put("message", message).toString())
+    }
 
     private fun recordNetwork() {
         try {
@@ -133,8 +142,11 @@ class PiRuntime(private val context: Context) {
 
     // Only explicit bridge methods are exposed to Node, not general JVM access.
     inner class NativeHost {
-        @V8Function fun networkReady(): Boolean = foreground &&
+        @V8Function fun networkReady(): Boolean = (foreground || automation.running) &&
             (context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).activeNetwork != null
+        @V8Function fun deviceRequest(id: Int, json: String) { main.post { automation.request(id, json) { deviceResults.offer(it) } } }
+        @V8Function fun deviceCancel(id: Int) { main.post { automation.cancel(id) } }
+        @V8Function fun deviceEnd(session: String) { main.post { automation.end(false, session) } }
         @V8Function fun emit(json: String) { publish(json) }
         @V8Function fun readCredential(): String = try {
             credentials.read().also { diagnostics.record("credentials.read", JSONObject().put("result", if (it.isEmpty()) "absent" else "present")) }
@@ -206,6 +218,7 @@ class PiRuntime(private val context: Context) {
                         val command = commands.poll(10, TimeUnit.MILLISECONDS)
                         if (command != null) app.invokeVoid("command", command)
                         dnsResults.poll()?.let { app.invokeVoid("dnsResult", it) }
+                        deviceResults.poll()?.let { app.invokeVoid("deviceResult", it) }
                         node.await(V8AwaitMode.RunNoWait)
                     }
                 }
@@ -217,6 +230,7 @@ class PiRuntime(private val context: Context) {
             publish(JSONObject().put("type", "fatal")
                 .put("message", "Embedded Node could not run (${error.javaClass.simpleName}). This device/runtime combination needs diagnosis.").toString())
         } finally {
+            main.post { automation.end(false) }
             dnsExecutor.shutdownNow()
         }
     }

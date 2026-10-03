@@ -43,6 +43,35 @@ installed version/commit, network state, DNS outcomes, OAuth stages and HTTP sta
 Only allowlisted fields are stored: tokens, callback URLs, headers, response bodies,
 device IDs and conversation text are excluded. Export uses Android's file picker.
 
+## Device tasks (accessibility preview)
+
+1. Sign in, then tap **Run device task**. Open Accessibility settings and enable
+   **Pi Durable** yourself. Some Android versions require **Allow restricted
+   settings** in Pi Durable's App info menu before enabling a sideloaded service.
+2. Return to Pi and tap **Run device task** again. Choose one app and describe the
+   task. The default milestone opens **Settings → About phone** and reads the model.
+3. Review the disclosure and tap **Start task**. Visible screen text goes to OpenAI
+   as tool input and is stored in the local SQLite conversation, outside diagnostic logs.
+4. Pi opens the app and inspects its accessibility tree. Confirm taps, text entry
+   and Back using **Allow once**. Scrolling and observation run automatically.
+5. **Stop Pi** in the overlay or foreground-service notification immediately revokes
+   access. Sessions also end at task completion, service disconnect, process death,
+   or after five minutes. Completed tasks return to the Pi chat.
+
+Device tools are `device_open_app`, `device_read_screen`, `device_act` (tap, type,
+scroll), and `device_back`. They are sequential and never automatically replay an
+interrupted action. Native code enforces the selected package and ephemeral session;
+old node IDs and changed controls are rejected. Every action returns a new observation.
+At most 60 operations and 160 visible nodes per observation are permitted.
+Password and Android-marked sensitive nodes are omitted. Pi cannot control its own
+approval UI. No screen capture runs outside an explicitly started task.
+
+This preview uses semantic accessibility controls, not coordinate taps or screenshots.
+Apps with incomplete accessibility trees, secure screens, app-to-app transitions,
+and OEM background restrictions may prevent tasks. The foreground service supports
+model networking while the selected app is visible. It does not guarantee execution
+under every device power policy. Verify the Settings milestone on the phone first.
+
 ## Build
 
 Requires JDK 17 or 21, Node >=22.19, and Android SDK platform 35/build-tools 35.0.0.
@@ -86,6 +115,9 @@ machines should use the general build instructions above.
   callbacks, a fake model response, SQLite and conversation restore. This checks
   the embedding bridge, separately from the host Node tests.
 - Kotlin/Android APK compilation, TypeScript checking and Android lint.
+- Device tool loop with a fake model, session pinning, cancellation and late-result
+  rejection; native session expiry, operation budget, revocation and restart behavior.
+  The Javet probe runs a model tool call through the actual Java method binding.
 - Diagnostic log privacy, bounded persistence, restart recovery, concurrent writes,
   and HTTP instrumentation preserving requests and response bodies.
 - Browser callback completion while backgrounded, delayed token exchange until
@@ -100,10 +132,11 @@ fails at `packages/ai/test/stream.test.ts:705`: the Cloudflare fixture requests
 `claude-sonnet-4-5`, while the repository-pinned catalog contains `claude-sonnet-4.5`.
 This is an existing issue outside the Android project; the fixture is unchanged.
 
-**Not yet verified:** execution on Android hardware, real ChatGPT subscription
-login, streaming from OpenAI on Android, or Android process-death recovery while
-a request is in flight. No Android device is attached to this cloud workspace.
-Successful offline tests do not establish account eligibility or device compatibility.
+**Device-confirmed in 0.1.4:** ChatGPT sign-in and a real reply on a Nothing phone.
+**Not yet verified:** the new accessibility flow and foreground service on hardware,
+real credential refresh, or Android process-death recovery during a request.
+No Android device is attached to this cloud workspace; desktop tests do not verify
+Android AccessibilityService behavior on a phone.
 
 `test/RuntimeProbe.java` and `test/embedded-smoke.cjs` contain the desktop Javet
 probe. It needs the Maven artifacts `com.caoccao.javet:javet:6.0.1` and
@@ -114,14 +147,15 @@ probe. It needs the Maven artifacts `com.caoccao.javet:javet:6.0.1` and
 - `runtime/index.ts`: provider, OAuth, durable harness, SQLite and command bridge.
 - `runtime/credentials.ts`: serialized credential updates delegated to Kotlin.
 - `runtime/android-dns.ts`: Node hostname lookup bridge to Android's system DNS.
+- `runtime/device-tools.ts`: Pi tool definitions and cancellable native request bridge.
 - `app/src/main/java/dev/pi/android/`: UI, Javet worker, Android Keystore storage.
 - `scripts/bundle.mjs`: reproducible source bundle; generated assets are ignored.
 
 The Node runtime belongs to the Android Application and has a dedicated thread.
 It keeps its callback server alive while the browser is foregrounded, provided
-Android keeps the app process alive. There is no foreground service or guarantee
-of continuous background execution. One conversation, text only, with no tools
-or accessibility service is implemented in this POC.
+Android keeps the app process alive. A foreground service runs only during explicit
+device tasks; the accessibility service remains user-controlled. One text conversation
+is implemented in this POC. Device sessions are never persisted or automatically resumed.
 
 OAuth credentials are encrypted with AES-GCM using a nonexportable Android
 Keystore key; backups are disabled. Chat history is in app-private SQLite and is
@@ -138,7 +172,7 @@ This routes lookups through Android's active network, VPN and Private DNS settin
 The affected phone reports no active network during token exchange while the
 browser is foregrounded, even with its VPN disabled. Token requests now wait for
 the Activity to resume and Android to expose a network. This addresses the observed
-timing, but successful login still needs validation on the phone. Exported logs
+timing; sign-in and chat were confirmed on the phone in 0.1.4. Exported logs
 include foreground state, Data Saver, power saving and background restrictions.
 OAuth
 exchange, refresh and API calls keep their original TLS hostname and certificate

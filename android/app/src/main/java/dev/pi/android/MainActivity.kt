@@ -9,6 +9,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
+import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -31,6 +32,7 @@ class MainActivity : Activity() {
     private lateinit var model: Button
     private lateinit var send: Button
     private lateinit var stop: Button
+    private lateinit var deviceTask: Button
     private lateinit var input: EditText
     private lateinit var messages: LinearLayout
     private lateinit var scroller: ScrollView
@@ -81,6 +83,8 @@ class MainActivity : Activity() {
         controls.addView(model)
         root.addView(controls)
         root.addView(button("Export diagnostics") { exportDiagnostics() })
+        deviceTask = button("Run device task") { configureDeviceTask() }.apply { isEnabled = false }
+        root.addView(deviceTask)
 
         messages = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         scroller = ScrollView(this).apply { isFillViewport = true; addView(messages) }
@@ -93,7 +97,7 @@ class MainActivity : Activity() {
         }
         root.addView(input)
         val actions = LinearLayout(this).apply { gravity = Gravity.END }
-        stop = button("Stop") { command("stop") }.apply { isEnabled = false }
+        stop = button("Stop") { (application as PiApplication).automation.end(true); command("stop") }.apply { isEnabled = false }
         send = button("Send") {
             val value = input.text.toString().trim()
             if (value.isNotEmpty()) {
@@ -118,6 +122,37 @@ class MainActivity : Activity() {
     override fun onSaveInstanceState(state: Bundle) {
         state.putString("draft", input.text.toString())
         super.onSaveInstanceState(state)
+    }
+    @Suppress("DEPRECATION")
+    private fun configureDeviceTask() {
+        val automation = (application as PiApplication).automation
+        if (automation.service == null) {
+            AlertDialog.Builder(this).setTitle("Enable device assistance")
+                .setMessage("Enable Pi Durable in Android Accessibility settings, then return here. Pi reads the selected app only during a task you start. Screen text is sent to OpenAI and stored in your local conversation. Password fields are excluded.")
+                .setPositiveButton("Open accessibility") { _, _ -> startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                .setNegativeButton("Cancel", null).show()
+            return
+        }
+        val apps = listOf("Settings" to "com.android.settings") + packageManager.queryIntentActivities(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+            .map { it.loadLabel(packageManager).toString() to it.activityInfo.packageName }
+            .filter { it.second != packageName && it.second != "com.android.settings" }.distinctBy { it.second }.sortedBy { it.first }
+        val picker = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, apps.map { "${it.first} (${it.second})" }) }
+        val task = EditText(this).apply {
+            hint = "What should Pi do in this app?"
+            setText(input.text.toString().ifBlank { "Open Settings, navigate to About phone, and report the device model. Do not change settings." })
+            minLines = 2; maxLines = 5
+        }
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), 0, dp(20), 0); addView(picker); addView(task) }
+        AlertDialog.Builder(this).setTitle("Start a device task")
+            .setMessage("Pi will read this app’s visible screen text and send it to OpenAI. Tool results stay in the local conversation. Taps, text entry and Back need your approval. Use the floating Stop Pi button to end access. Tasks expire after 5 minutes.")
+            .setView(form).setPositiveButton("Start task") { _, _ ->
+                try {
+                    automation.begin(apps[picker.selectedItemPosition].second, task.text.toString().take(4000))
+                    deviceTask.isEnabled = false
+                    input.setText("")
+                } catch (error: Exception) { showError(error.message ?: "Could not start device task.") }
+            }.setNegativeButton("Cancel", null).show()
     }
     override fun onDestroy() {
         runtime.detach(listener)
@@ -177,6 +212,7 @@ class MainActivity : Activity() {
                 model.isEnabled = !busy && !signingIn
                 send.isEnabled = authenticated && !busy && !signingIn
                 stop.isEnabled = busy
+                deviceTask.isEnabled = authenticated && !busy && !signingIn && !(application as PiApplication).automation.running
                 messages.removeAllViews()
                 val transcript = event.getJSONArray("messages")
                 if (transcript.length() == 0) messages.addView(text("Your conversation is stored on this device. Sign in with ChatGPT to begin.", 15f).apply { setPadding(0, dp(24), 0, 0) })
@@ -215,6 +251,7 @@ class MainActivity : Activity() {
             "fatal" -> {
                 status.setText(R.string.runtime_unavailable)
                 login.isEnabled = false; model.isEnabled = false; send.isEnabled = false; stop.isEnabled = false
+                deviceTask.isEnabled = false
                 showError(event.getString("message"))
             }
         }

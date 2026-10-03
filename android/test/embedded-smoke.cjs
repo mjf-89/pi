@@ -1,7 +1,7 @@
 // Loaded by RuntimeProbe.java inside Javet, not by the system node executable.
-const { createApp, start } = require('../app/src/main/assets/pi-runtime.cjs');
+const { createApp, start, createDeviceBridge } = require('../app/src/main/assets/pi-runtime.cjs');
 const http = require('node:http');
-const { fauxProvider, fauxAssistantMessage } = require('../node_modules/@earendil-works/pi-ai/dist/index.js');
+const { fauxProvider, fauxAssistantMessage, fauxToolCall } = require('../node_modules/@earendil-works/pi-ai/dist/index.js');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -45,6 +45,15 @@ globalThis.probeFailure = '';
     await app.close();
     app = await createApp(globalThis.nativeHost, directory, options);
     await app.command({ type: 'state' });
+    await app.close();
+    globalThis.deviceProbe = createDeviceBridge(globalThis.nativeHost);
+    fake.setResponses([
+      fauxAssistantMessage([fauxToolCall('device_open_app', {}, { id: 'device-open' })], { stopReason: 'toolUse' }),
+      fauxAssistantMessage('Settings observed through Java.'),
+    ]);
+    app = await createApp(globalThis.nativeHost, directory, { ...options, deviceBridge: globalThis.deviceProbe });
+    const deviceResult = await app.command({ type: 'device_send', text: 'Open Settings.', requestId: 'javet-device-1', session: 'embedded-device-session' });
+    assert.equal(deviceResult.status, 'done');
   } finally {
     await app?.close();
     fs.rmSync(directory, { recursive: true, force: true });

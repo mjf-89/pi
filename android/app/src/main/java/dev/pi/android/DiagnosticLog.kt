@@ -63,11 +63,12 @@ class DiagnosticLog(private val file: File) {
     }
 
     companion object {
-        private val EVENTS = setOf("app.start", "app.foreground", "runtime.start", "runtime.failure", "oauth.start", "oauth.browser", "oauth.exchange", "oauth.success", "oauth.failure", "oauth.network.wait", "oauth.network.ready", "oauth.network.timeout", "http.start", "http.response", "http.failure", "error.cause", "dns.bridge.installed", "dns.lookup.start", "dns.lookup.finish", "dns.native.start", "dns.native.finish", "network.snapshot", "credentials.read", "credentials.write", "diagnostics.export")
+        private val EVENTS = setOf("device.start", "device.ready", "device.stop", "device.request", "device.result", "device.failure", "app.start", "app.foreground", "runtime.start", "runtime.failure", "oauth.start", "oauth.browser", "oauth.exchange", "oauth.success", "oauth.failure", "oauth.network.wait", "oauth.network.ready", "oauth.network.timeout", "http.start", "http.response", "http.failure", "error.cause", "dns.bridge.installed", "dns.lookup.start", "dns.lookup.finish", "dns.native.start", "dns.native.finish", "network.snapshot", "credentials.read", "credentials.write", "diagnostics.export")
         private val HOSTS = setOf("auth.openai.com", "api.openai.com", "localhost", "127.0.0.1", "::1")
         private val NUMBERS = setOf("id", "family", "hints", "ipv4Count", "ipv6Count", "dnsServerCount", "durationMs", "status", "depth", "versionCode")
         private val BOOLEANS = setOf("all", "foreground", "dataSaver", "powerSave", "backgroundRestricted", "activeNetwork", "wifi", "cellular", "ethernet", "vpn", "internet", "validated", "privateDns", "privateDnsConfigured", "bridgeInstalled", "httpProxyConfigured", "httpsProxyConfigured", "allProxyConfigured", "noProxyConfigured")
         private val STRINGS = mapOf(
+            "action" to setOf("read", "open", "tap", "type", "scroll", "back"),
             "stage" to setOf("prepare", "browser", "exchange", "credentials", "runtime", "http", "dns"),
             "result" to setOf("ok", "failed", "cancelled", "timeout", "present", "absent"),
             "operation" to setOf("oauth_token", "api_request", "other"),

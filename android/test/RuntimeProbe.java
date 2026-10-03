@@ -12,10 +12,19 @@ public final class RuntimeProbe {
     public static final class NativeHost {
         String latest = "";
         final ConcurrentLinkedQueue<String> dnsResults = new ConcurrentLinkedQueue<>();
+        final ConcurrentLinkedQueue<String> deviceResults = new ConcurrentLinkedQueue<>();
+        int deviceCalls = 0;
         int dnsLookups = 0;
         int networkChecks = 0;
         @V8Function public void emit(String json) { latest = json; }
         @V8Function public boolean networkReady() { networkChecks++; return true; }
+        @V8Function public void deviceRequest(int id, String json) {
+            if (!json.contains("embedded-device-session")) throw new AssertionError("Missing device session");
+            deviceCalls++;
+            deviceResults.offer("{\"id\":" + id + ",\"result\":{\"ok\":true,\"screen\":{\"package\":\"com.android.settings\",\"nodes\":[{\"id\":\"1:0\",\"text\":\"About phone\"}]}}}");
+        }
+        @V8Function public void deviceCancel(int id) {}
+        @V8Function public void deviceEnd(String session) {}
         @V8Function public String readCredential() { return ""; }
         @V8Function public void writeCredential(String value) { throw new AssertionError("No real credentials in this probe"); }
         @V8Function public String deviceId() { return "a17d00f0-7384-4b4a-bdac-667d1d137e48"; }
@@ -55,6 +64,11 @@ public final class RuntimeProbe {
                         app.invokeVoid("dnsResult", result);
                     }
                 }
+                while ((result = host.deviceResults.poll()) != null) {
+                    try (V8ValueObject bridge = runtime.getGlobalObject().get("deviceProbe")) {
+                        bridge.invokeVoid("result", result);
+                    }
+                }
                 runtime.await(V8AwaitMode.RunNoWait);
                 Thread.sleep(5);
             }
@@ -63,6 +77,7 @@ public final class RuntimeProbe {
             if (!failure.isEmpty()) throw new AssertionError(failure);
             if (host.dnsLookups == 0) throw new AssertionError("HTTP fetch did not use the Java DNS bridge");
             if (host.networkChecks == 0) throw new AssertionError("OAuth did not check Java network readiness");
+            if (host.deviceCalls != 1) throw new AssertionError("Device tool did not cross the Java bridge");
             if (!host.latest.contains("Answer from embedded Node.")) throw new AssertionError("Conversation was not restored: " + host.latest);
             try (V8ValueObject nativeObject = runtime.getGlobalObject().get("nativeHost")) {
                 nativeObject.unbind(host);

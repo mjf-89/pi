@@ -12,6 +12,8 @@ import { loginError } from "./auth-errors.ts";
 import { installAndroidDns, type AndroidDnsHost } from "./android-dns.ts";
 import { installHttpDiagnostics, recordError, type DiagnosticSink } from "./diagnostics.ts";
 import { installOAuthNetworkGate, type OAuthNetworkHost } from "./oauth-network.ts";
+import { createDeviceBridge, deviceExtension, type DeviceBridge, type DeviceHost } from "./device-tools.ts";
+export { createDeviceBridge } from "./device-tools.ts";
 
 export interface NativeHost extends CredentialHost {
   emit(json: string): void;
@@ -24,6 +26,7 @@ export interface AppOptions {
   modelId?: string;
   authenticated?: boolean;
   diagnostics?: DiagnosticSink;
+  deviceBridge?: DeviceBridge;
 }
 
 const context = BACKGROUND_CONTEXT;
@@ -48,8 +51,10 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
   let authenticated = options.authenticated ?? Boolean(await credentials.read("openai"));
   const modelId = options.modelId ?? "gpt-6-sol";
   if (!models.getModel(provider.id, modelId)) throw new Error(`Model is not in the pinned catalog: ${modelId}`);
+  const registry = createRegistry();
+  if (options.deviceBridge) registry.install(deviceExtension(options.deviceBridge));
   const harness = await Harness.open(await openNodeSqliteStorage(join(directory, "conversation.sqlite")), {
-    models, registry: createRegistry(), settings: { retry: { maxRetries: 2 } },
+    models, registry, settings: { retry: { maxRetries: 2 } },
   }, context);
   const root = await harness.root(context, { agent: { model: { provider: provider.id, modelId } } });
   const watch = await root.watch(context);
@@ -94,7 +99,7 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
     emit({ type: "auth_prompt", message: request.message, promptType: request.type });
   });
 
-  async function command(input: { type: string; text?: string; requestId?: string; modelId?: string }) {
+  async function command(input: { type: string; text?: string; requestId?: string; modelId?: string; session?: string }) {
     if (closed) throw new Error("Runtime is closed");
     switch (input.type) {
       case "state": publish(); return;
@@ -138,6 +143,7 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
       case "cancel_login": login?.abort(); return;
       case "auth_reply": pendingPrompt?.resolve(input.text ?? ""); return;
       case "logout":
+        options.deviceBridge?.end();
         login?.abort();
         await root.abort(context);
         await models.logout(provider.id);
@@ -148,16 +154,24 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
         if (!input.modelId || !models.getModel(provider.id, input.modelId)) throw new Error("Unknown model.");
         await root.configure({ model: { provider: provider.id, modelId: input.modelId } }, context);
         return;
-      case "send": {
+      case "send":
+      case "device_send": {
         if (!authenticated) throw new Error("Sign in with ChatGPT first.");
         const text = input.text?.trim();
         if (!text || !input.requestId) throw new Error("A message and request ID are required.");
-        const submission = await root.submit({ type: "input", content: text, requestId: input.requestId }, context);
-        const result = await submission.wait(context);
-        if (result.status !== "done") emit({ type: "error", message: "The input was not answered. Check your connection, model selection, and subscription access." });
-        return result;
+        const deviceTask = input.type === "device_send";
+        if (deviceTask) {
+          if (!input.session || !options.deviceBridge) throw new Error("Device task bridge is unavailable.");
+          options.deviceBridge.begin(input.session);
+        }
+        try {
+          const submission = await root.submit({ type: "input", content: text, requestId: input.requestId }, context);
+          const result = await submission.wait(context);
+          if (result.status !== "done") emit({ type: "error", message: "The input was not answered. Check your connection, model selection, and subscription access." });
+          return result;
+        } finally { if (deviceTask) options.deviceBridge?.end(); }
       }
-      case "stop": await root.abort(context); return;
+      case "stop": options.deviceBridge?.end(); await root.abort(context); return;
       default: throw new Error("Unknown command.");
     }
   }
@@ -166,6 +180,7 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
     async close() {
       if (closed) return;
       closed = true;
+      options.deviceBridge?.end();
       login?.abort();
       await watch.stop();
       await harness.close(context);
@@ -174,7 +189,7 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
 }
 
 /** Synchronous entry point for Javet. All commands and callbacks stay on its worker thread. */
-export function start(host: NativeHost & AndroidDnsHost & OAuthNetworkHost, directory: string) {
+export function start(host: NativeHost & AndroidDnsHost & OAuthNetworkHost & DeviceHost, directory: string) {
   const diagnose: DiagnosticSink = (event, fields) => host.diagnostic?.(JSON.stringify({ event, fields }));
   diagnose("runtime.start", { nodeVersion: process.versions.node,
     httpProxyConfigured: Boolean(process.env.HTTP_PROXY || process.env.http_proxy),
@@ -187,7 +202,8 @@ export function start(host: NativeHost & AndroidDnsHost & OAuthNetworkHost, dire
     host.emit(JSON.stringify({ type: "auth_prompt_closed" }));
     host.emit(JSON.stringify({ type: "notice", message: "Return to Pi Durable to finish sign-in. Waiting for network access…" }));
   });
-  const ready = createApp(host, directory, { diagnostics: (event, fields) => diagnose(event, { ...fields, bridgeInstalled: dns.isInstalled() }) });
+  const device = createDeviceBridge(host);
+  const ready = createApp(host, directory, { deviceBridge: device, diagnostics: (event, fields) => diagnose(event, { ...fields, bridgeInstalled: dns.isInstalled() }) });
   void ready.catch(error => {
     diagnose("runtime.failure", { stage: "runtime" });
     recordError(diagnose, "runtime", error);
@@ -195,6 +211,7 @@ export function start(host: NativeHost & AndroidDnsHost & OAuthNetworkHost, dire
   });
   return {
     dnsResult(json: string) { dns.result(json); },
+    deviceResult(json: string) { device.result(json); },
     command(json: string) {
       void ready.then(app => app.command(JSON.parse(json))).catch(error =>
         host.emit(JSON.stringify({ type: "error", message: safeError(error) })));

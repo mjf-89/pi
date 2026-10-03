@@ -1,8 +1,8 @@
-name: Publish Android foreground sign-in fix
+name: Publish Android accessibility preview
 
 on:
   push:
-    branches: [release/android-poc-foreground-login]
+    branches: [release/android-poc-accessibility]
 
 permissions:
   contents: write
@@ -52,14 +52,16 @@ jobs:
           cp android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk pi-android-poc-arm64.apk
           sha256sum pi-android-poc-arm64.apk > SHA256SUMS
           cat > /tmp/preview-notes.md <<'NOTES'
-          Defers the OAuth token request until Pi Durable is foregrounded and Android exposes an active network. After completing sign-in in your browser, return to Pi Durable within two minutes to finish. This addresses logs showing ENOTFOUND with no active app network during the browser callback, despite Wi-Fi being available before and after. Device confirmation is still needed.
+          Adds **Run device task**: choose one app, describe a task, and let Pi inspect its accessibility controls and navigate. First milestone: choose Settings and ask Pi to open About phone and report the device model without changing settings.
 
-          The browser callback remains available in the background. Cancellation discards the queued token request, waiting is bounded, and a sent authorization code is never automatically replayed. Network/VPN routing and TLS verification are unchanged. **Export diagnostics** now also records foreground state, Data Saver, power saving, background restrictions and network waiting. Tokens and conversation text are excluded.
+          Enable Pi Durable in Android Accessibility settings yourself, then return to Pi to start a task. For sideloaded apps Android may require **Allow restricted settings** in App info first. Screen text from the selected app goes to OpenAI and is stored in the local conversation. Password and Android-marked sensitive nodes are excluded. Diagnostic exports still exclude screen and conversation text.
+
+          Taps, text entry and Back require **Allow once** on the phone. A floating **Stop Pi** button and foreground-service notification end access. Tasks are limited to one selected app, five minutes and 60 operations; access is revoked after completion or process death. Stale nodes are rejected, actions return fresh observations, and interrupted actions are not automatically replayed. The foreground service supports model networking while another app is visible.
 
           Download `pi-android-poc-arm64.apk` for ARM64 Android phones, including Nothing devices. Requires Android 8.0 or newer. This is the regular **Pi Durable** app. Earlier previews used disposable CI debug keys: uninstall the original Pi Durable app before installing this build. Uninstalling clears that app's local data. The separate Diagnostics app can remain installed.
 
-          Validation passed: APK compilation, Android lint, TypeScript checks, native diagnostic-log privacy/persistence/concurrency tests, OAuth callback/foreground/network sequencing, cancellation and timeout tests, runtime/DNS tests, embedded Javet native readiness and HTTP/DNS checks, and APK signature verification. If sign-in still fails after returning to Pi Durable, attach the exported JSON.
+          Validation: TypeScript and Android compilation/lint; fake-model Settings tool loop; native session expiry/budget/revocation tests; bridge cancellation and stale-response tests; embedded Javet model-to-Java tool execution; existing OAuth/DNS/privacy checks. The accessibility and foreground-service flow still needs validation on Android hardware. Semantic controls only: no screenshots, coordinate gestures, or cross-app automation in this preview.
 
           The APK was built on GitHub Actions. SHA-256 is recorded in the attached SHA256SUMS file.
           NOTES
-          gh release create android-poc-preview-0.1.4 pi-android-poc-arm64.apk SHA256SUMS --repo mjf-89/pi --target "$GITHUB_SHA" --prerelease --latest=false --title 'Android PoC 0.1.4 — Wait for foreground network access' --notes-file /tmp/preview-notes.md
+          gh release create android-poc-preview-0.1.5 pi-android-poc-arm64.apk SHA256SUMS --repo mjf-89/pi --target "$GITHUB_SHA" --prerelease --latest=false --title 'Android PoC 0.1.5 — Accessibility device tasks' --notes-file /tmp/preview-notes.md
