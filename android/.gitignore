@@ -1,0 +1,12 @@
+.gradle/
+.cache/
+**/build/
+node_modules/
+dist/
+local.properties
+*.jks
+*.hprof
+app/src/main/assets/pi-runtime.cjs
+app/src/main/assets/build-info.json
+.kotlin/
+*.apk

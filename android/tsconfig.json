@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "paths": {
+      "pi-source/providers/openai.models": ["./node_modules/@earendil-works/pi-ai/dist/providers/openai.models.d.ts"],
+      "pi-source/*": ["../packages/ai/src/*.ts"],
+      "@earendil-works/pi-ai": ["../packages/ai/src/index.ts"],
+      "@earendil-works/pi-ai/*": ["../packages/ai/src/*"],
+      "@earendil-works/pi-telemetry": ["../packages/telemetry/src/index.ts"],
+      "@earendil-works/pi-durable": ["../packages/durable/src/index.ts"],
+      "@earendil-works/pi-durable/*": ["../packages/durable/src/*"],
+      "@earendil-works/chord": ["../packages/chord/src/index.ts"],
+      "@earendil-works/chord/*": ["../packages/chord/src/*"]
+    }
+  },
+  "include": ["runtime/**/*.ts"]
+}

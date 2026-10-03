@@ -1,0 +1,17 @@
+{
+  "name": "pi-android-poc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bundle": "node scripts/bundle.mjs",
+    "check": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "1.0.0",
+    "@types/node": "22.19.19",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}
