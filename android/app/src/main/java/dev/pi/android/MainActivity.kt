@@ -41,6 +41,8 @@ class MainActivity : Activity() {
     private var manualDialog: AlertDialog? = null
     private var pendingBrowserUrl: String? = null
     private val listener: (JSONObject) -> Unit = { event -> onEvent(event) }
+    @Suppress("DEPRECATION")
+    private val version by lazy { packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown" }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun text(value: String, size: Float = 16f) = TextView(this).apply { text = value; textSize = size; setTextColor(Color.rgb(27, 35, 45)) }
     private fun button(label: String, action: () -> Unit) = Button(this).apply { text = label; isAllCaps = false; setOnClickListener { action() } }
@@ -78,6 +80,7 @@ class MainActivity : Activity() {
         controls.addView(login, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         controls.addView(model)
         root.addView(controls)
+        root.addView(button("Export diagnostics") { exportDiagnostics() })
 
         messages = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         scroller = ScrollView(this).apply { isFillViewport = true; addView(messages) }
@@ -113,6 +116,31 @@ class MainActivity : Activity() {
         manualDialog?.dismiss()
         super.onDestroy()
     }
+    @Suppress("DEPRECATION")
+    private fun exportDiagnostics() {
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, "pi-diagnostics-${System.currentTimeMillis()}.json")
+        }
+        try { startActivityForResult(intent, 4701) }
+        catch (_: Exception) { Toast.makeText(this, "No file picker is available to save diagnostics.", Toast.LENGTH_LONG).show() }
+    }
+    @Deprecated("Activity result callback retained for the framework Activity used by this PoC")
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != 4701 || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        Thread({
+            val message = try {
+                val output = contentResolver.openOutputStream(uri) ?: throw java.io.IOException("No output stream")
+                output.use { runtime.exportDiagnostics(it) }
+                "Diagnostics saved. You can attach the JSON file to your report."
+            } catch (_: Exception) { "Could not save diagnostics. Try another folder." }
+            runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
+        }, "pi-diagnostics-export").start()
+    }
     private fun addMessage(role: String, value: String) {
         val item = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -135,7 +163,7 @@ class MainActivity : Activity() {
                 currentModel = event.getString("model")
                 val available = event.getJSONArray("models")
                 modelIds = (0 until available.length()).map { available.getString(it) }
-                status.text = getString(R.string.runtime_status, event.getString("node"), currentModel)
+                status.text = getString(R.string.runtime_status, event.getString("node"), currentModel) + " · v$version"
                 login.text = if (signingIn) "Cancel sign-in" else if (authenticated) "ChatGPT connected" else "Sign in with ChatGPT"
                 login.isEnabled = true
                 model.isEnabled = !busy && !signingIn
@@ -183,7 +211,8 @@ class MainActivity : Activity() {
             }
         }
     }
-    private fun showError(message: String) { AlertDialog.Builder(this).setTitle("Pi Durable").setMessage(message).setPositiveButton("OK", null).show() }
+    private fun showError(message: String) { AlertDialog.Builder(this).setTitle("Pi Durable").setMessage(message)
+        .setNeutralButton("Export diagnostics") { _, _ -> exportDiagnostics() }.setPositiveButton("OK", null).show() }
     private fun selectModel() {
         val spinner = Spinner(this)
         spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, modelIds)

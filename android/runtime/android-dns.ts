@@ -1,6 +1,7 @@
 import dns, { type LookupAddress, type LookupOptions } from "node:dns";
 import { syncBuiltinESMExports } from "node:module";
 import { isIP } from "node:net";
+import type { DiagnosticSink } from "./diagnostics.ts";
 
 export interface AndroidDnsHost {
   resolveHost(id: number, hostname: string): void;
@@ -8,7 +9,7 @@ export interface AndroidDnsHost {
 type LookupCallback = (error: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void;
 
 /** Javet's native resolver cannot reliably use Android's network/VPN DNS configuration. */
-export function installAndroidDns(host: AndroidDnsHost) {
+export function installAndroidDns(host: AndroidDnsHost, diagnose: DiagnosticSink = () => {}) {
   const original = dns.lookup;
   const originalPromise = dns.promises.lookup;
   let nextId = 0;
@@ -28,6 +29,8 @@ export function installAndroidDns(host: AndroidDnsHost) {
     if (![0, 4, 6].includes(family)) throw new TypeError("DNS family must be 0, 4, or 6");
     const order = options.order ?? (options.verbatim === false ? "ipv4first" : options.verbatim === true ? "verbatim" : dns.getDefaultResultOrder());
     const id = ++nextId;
+    const started = Date.now();
+    diagnose("dns.lookup.start", { id, host: hostname, family, all: Boolean(options.all), hints: options.hints ?? 0 });
     const timer = setTimeout(() => finish("EAI_AGAIN"), 15_000);
     const finish = (code?: string, resolved: LookupAddress[] = []) => {
       if (!pending.delete(id)) return;
@@ -40,6 +43,8 @@ export function installAndroidDns(host: AndroidDnsHost) {
       const error = code || !addresses.length
         ? Object.assign(new Error(`Android DNS lookup failed (${code ?? "ENOTFOUND"})`), { code: code ?? "ENOTFOUND", syscall: "getaddrinfo", hostname })
         : null;
+      diagnose("dns.lookup.finish", { id, result: error ? "failed" : "ok", ...(error?.code ? { code: error.code } : {}), durationMs: Date.now() - started,
+        ipv4Count: addresses.filter(address => address.family === 4).length, ipv6Count: addresses.filter(address => address.family === 6).length });
       // Match Node's asynchronous callback behavior, including native synchronous failures.
       process.nextTick(() => {
         if (options.all) reply(error, error ? [] : addresses);
@@ -60,8 +65,10 @@ export function installAndroidDns(host: AndroidDnsHost) {
     });
   })) as typeof dns.promises.lookup;
   syncBuiltinESMExports();
+  diagnose("dns.bridge.installed", { bridgeInstalled: dns.lookup === lookup });
 
   return {
+    isInstalled() { return dns.lookup === lookup; },
     result(json: string) {
       const result = JSON.parse(json) as { id: number; code?: string; addresses?: LookupAddress[] };
       pending.get(result.id)?.finish(result.code, result.addresses);

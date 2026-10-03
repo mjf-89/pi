@@ -10,8 +10,8 @@ android {
         applicationId = "dev.pi.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.1.2-poc"
+        versionCode = 4
+        versionName = "0.1.3-poc"
         if (providers.gradleProperty("diagnostic").orNull == "true") {
             applicationIdSuffix = ".diagnostic"
             resValue("string", "app_name", "Pi Durable Diagnostics")
@@ -38,6 +38,8 @@ android {
 
 dependencies {
     implementation("com.caoccao.javet:javet-node-android-i18n:6.0.1")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
 
 val bundlePi by tasks.registering(Exec::class) {

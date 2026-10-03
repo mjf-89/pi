@@ -10,16 +10,19 @@ import { OPENAI_MODELS } from "pi-source/providers/openai.models";
 import { AndroidCredentialStore, type CredentialHost } from "./credentials.ts";
 import { loginError } from "./auth-errors.ts";
 import { installAndroidDns, type AndroidDnsHost } from "./android-dns.ts";
+import { installHttpDiagnostics, recordError, type DiagnosticSink } from "./diagnostics.ts";
 
 export interface NativeHost extends CredentialHost {
   emit(json: string): void;
   deviceId(): string;
+  diagnostic?(json: string): void;
 }
 export interface AppOptions {
   /** Test injection; the APK calls start with its normal subscription provider. */
   provider?: Provider;
   modelId?: string;
   authenticated?: boolean;
+  diagnostics?: DiagnosticSink;
 }
 
 const context = BACKGROUND_CONTEXT;
@@ -31,6 +34,7 @@ function safeError(error: unknown): string {
 }
 
 export async function createApp(host: NativeHost, directory: string, options: AppOptions = {}) {
+  const diagnose = options.diagnostics ?? (() => {});
   mkdirSync(directory, { recursive: true });
   const emit = (event: object) => host.emit(JSON.stringify(event));
   const credentials = new AndroidCredentialStore(host);
@@ -101,20 +105,24 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
         // The user completes login in the system browser; the Node callback stays alive.
         const timeout = setTimeout(() => controller.abort(), 10 * 60_000);
         let stage: "prepare" | "browser" | "exchange" = "prepare";
+        diagnose("oauth.start", { stage });
         try {
           await models.login(provider.id, "oauth", {
             signal: controller.signal, prompt,
             notify: event => {
-              if (event.type === "auth_url") { stage = "browser"; emit({ type: "auth_url", url: event.url }); }
-              if (event.type === "progress") stage = "exchange";
+              if (event.type === "auth_url") { stage = "browser"; diagnose("oauth.browser", { stage }); emit({ type: "auth_url", url: event.url }); }
+              if (event.type === "progress") { stage = "exchange"; diagnose("oauth.exchange", { stage }); }
               if (event.type === "progress" || event.type === "info") emit({ type: "notice", message: event.message });
             },
           }, { getDeviceId: () => host.deviceId() });
           controller.signal.throwIfAborted();
           authenticated = true;
+          diagnose("oauth.success", { stage: "credentials", result: "ok" });
           harness.resume();
           emit({ type: "notice", message: "ChatGPT connected." });
         } catch (error) {
+          diagnose("oauth.failure", { stage, result: controller.signal.aborted ? "cancelled" : "failed" });
+          recordError(diagnose, stage, error);
           // OAuth failures can contain token response bodies; never forward those to the UI or logs.
           emit({ type: "error", message: controller.signal.aborted ? "Sign-in cancelled or timed out." : loginError(error, stage) });
         } finally {
@@ -166,15 +174,26 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
 
 /** Synchronous entry point for Javet. All commands and callbacks stay on its worker thread. */
 export function start(host: NativeHost & AndroidDnsHost, directory: string) {
-  const dns = installAndroidDns(host);
-  const ready = createApp(host, directory);
-  void ready.catch(error => host.emit(JSON.stringify({ type: "fatal", message: safeError(error) })));
+  const diagnose: DiagnosticSink = (event, fields) => host.diagnostic?.(JSON.stringify({ event, fields }));
+  diagnose("runtime.start", { nodeVersion: process.versions.node,
+    httpProxyConfigured: Boolean(process.env.HTTP_PROXY || process.env.http_proxy),
+    httpsProxyConfigured: Boolean(process.env.HTTPS_PROXY || process.env.https_proxy),
+    allProxyConfigured: Boolean(process.env.ALL_PROXY || process.env.all_proxy),
+    noProxyConfigured: Boolean(process.env.NO_PROXY || process.env.no_proxy) });
+  const dns = installAndroidDns(host, diagnose);
+  const restoreHttp = installHttpDiagnostics(diagnose);
+  const ready = createApp(host, directory, { diagnostics: (event, fields) => diagnose(event, { ...fields, bridgeInstalled: dns.isInstalled() }) });
+  void ready.catch(error => {
+    diagnose("runtime.failure", { stage: "runtime" });
+    recordError(diagnose, "runtime", error);
+    host.emit(JSON.stringify({ type: "fatal", message: safeError(error) }));
+  });
   return {
     dnsResult(json: string) { dns.result(json); },
     command(json: string) {
       void ready.then(app => app.command(JSON.parse(json))).catch(error =>
         host.emit(JSON.stringify({ type: "error", message: safeError(error) })));
     },
-    async close() { try { await (await ready).close(); } finally { dns.close(); } },
+    async close() { try { await (await ready).close(); } finally { restoreHttp(); dns.close(); } },
   };
 }

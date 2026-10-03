@@ -34,6 +34,13 @@ adb shell am start -n dev.pi.android/.MainActivity
 This is a debug build for development. Keep the same signing key when rebuilding
 to install updates without uninstalling and losing app data.
 
+If sign-in fails, tap **Export diagnostics** on the main screen or error dialog,
+save the JSON file, and attach it to your report. Reproduce the failure before
+exporting. Logs survive restarts and retain the latest 256 events, including the
+installed version/commit, network state, DNS outcomes, OAuth stages and HTTP status.
+Only allowlisted fields are stored: tokens, callback URLs, headers, response bodies,
+device IDs and conversation text are excluded. Export uses Android's file picker.
+
 ## Build
 
 Requires JDK 17 or 21, Node >=22.19, and Android SDK platform 35/build-tools 35.0.0.
@@ -55,7 +62,7 @@ npm ci --ignore-scripts
 npm run bundle
 npm run check
 node --test test/*.test.mjs
-./gradlew :app:assembleDebug :app:lintDebug
+./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 ```
 
 Set `ANDROID_HOME` to your SDK, or create an ignored `local.properties` with
@@ -77,6 +84,8 @@ machines should use the general build instructions above.
   callbacks, a fake model response, SQLite and conversation restore. This checks
   the embedding bridge, separately from the host Node tests.
 - Kotlin/Android APK compilation, TypeScript checking and Android lint.
+- Diagnostic log privacy, bounded persistence, restart recovery, concurrent writes,
+  and HTTP instrumentation preserving requests and response bodies.
 - DNS bridging: actual HTTP fetch through the resolver bridge, IPv4/IPv6 ordering,
   resolver failure and cleanup, and HTTPS certificate/hostname verification.
   The Javet probe also exercises Java DNS callbacks and a real HTTP fetch.
@@ -120,8 +129,9 @@ shipping both native libraries to a phone. ARM64 ELF segments have 16 KB alignme
 
 Node hostname lookups use Android's `InetAddress` resolver on background workers.
 Results return to the owning Javet thread before invoking JavaScript callbacks.
-This avoids the embedded native resolver's `ENOTFOUND` failures after browser
-sign-in and uses Android's active network, VPN and Private DNS settings. OAuth
+This routes lookups through Android's active network, VPN and Private DNS settings.
+The affected phone still reports `ENOTFOUND`; exported diagnostics are needed to
+identify where it fails. OAuth
 exchange, refresh and API calls keep their original TLS hostname and certificate
 verification; the app does not hardcode DNS servers or service IP addresses.
 
