@@ -1,0 +1,59 @@
+name: Publish Android PoC preview
+
+on:
+  push:
+    branches: [release/android-poc-preview-upload]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: f66c4edc69b7c65e3e8ac292223183bc9568d8f6
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            android/package-lock.json
+      - name: Select Java and install SDK packages
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm ci --ignore-scripts --prefix android
+      - name: Build and validate APK
+        working-directory: android
+        run: |
+          npm run bundle
+          npm run check
+          node --test test/runtime.test.mjs
+          ./gradlew --no-daemon :app:assembleDebug :app:lintDebug
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+      - name: Attach APK and update release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk pi-android-poc-arm64.apk
+          sha256sum pi-android-poc-arm64.apk > SHA256SUMS
+          gh release upload android-poc-preview-0.1.0 pi-android-poc-arm64.apk SHA256SUMS --repo mjf-89/pi
+          cat > /tmp/preview-notes.md <<'NOTES'
+          Android embedded Node proof of concept for Pi Durable, built from commit f66c4edc69b7c65e3e8ac292223183bc9568d8f6 on `android/embedded-node-poc`.
+
+          Download `pi-android-poc-arm64.apk` for ARM64 Android phones, including Nothing devices. Requires Android 8.0 or newer. This is a debug-signed preview build.
+
+          Validation passed: APK compilation, Android lint, TypeScript checks, all three runtime tests, and APK signature verification. Real Android hardware and live ChatGPT login/streaming have not yet been verified.
+
+          The APK was built on GitHub Actions. SHA-256 is recorded in the attached SHA256SUMS file.
+          NOTES
+          gh release edit android-poc-preview-0.1.0 --repo mjf-89/pi --notes-file /tmp/preview-notes.md
