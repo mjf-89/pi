@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { fauxProvider, fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { installOAuthNetworkGate } from "../runtime/oauth-network.ts";
 
 const require = createRequire(import.meta.url);
 const { createApp } = require("../app/src/main/assets/pi-runtime.cjs");
@@ -54,11 +55,14 @@ test("durable conversation persists across reopen and request IDs prevent duplic
   }
 });
 
-test("real Pi OAuth callback flow saves credentials without exposing tokens in UI events", async () => {
+test("browser callback completes in background but token exchange waits for foreground network access", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-android-auth-"));
   const host = nativeHost();
   const realFetch = globalThis.fetch;
   let exchange;
+  let foreground = false;
+  let network = false;
+  let waiting = false;
   globalThis.fetch = async (url, init) => {
     assert.equal(String(url), "https://auth.openai.com/api/accounts/oauth/token");
     exchange = new URLSearchParams(init.body);
@@ -67,6 +71,7 @@ test("real Pi OAuth callback flow saves credentials without exposing tokens in U
       expires_in: 3600, scope: "openid chatgpt.tokens.use.direct",
     }), { headers: { "content-type": "application/json" } });
   };
+  const restoreGate = installOAuthNetworkGate({ networkReady: () => foreground && network }, () => {}, () => { waiting = true; }, { pollMs: 5 });
   let app;
   try {
     app = await createApp(host, directory);
@@ -83,6 +88,13 @@ test("real Pi OAuth callback flow saves credentials without exposing tokens in U
     assert.equal(host.readCredential(), "");
     callback.searchParams.set("state", authorize.searchParams.get("state"));
     assert.equal((await realFetch(callback)).status, 200);
+    await waitFor(() => waiting);
+    assert.equal(exchange, undefined);
+    assert.equal(host.readCredential(), "");
+    foreground = true;
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(exchange, undefined, "resuming alone must not send the code before network access returns");
+    network = true;
     await login;
     assert.equal(exchange.get("client_id"), "issued-test-client");
     assert.equal(exchange.get("code"), "test-code");
@@ -94,6 +106,7 @@ test("real Pi OAuth callback flow saves credentials without exposing tokens in U
     await app.command({ type: "logout" });
     assert.equal(host.readCredential(), "");
   } finally {
+    restoreGate();
     globalThis.fetch = realFetch;
     await app?.close();
     await rm(directory, { recursive: true, force: true });

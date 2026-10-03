@@ -18,6 +18,8 @@ and a 64-bit CPU are required.
 3. Tap **Sign in with ChatGPT** and complete Pi's login in your system browser.
    Return to the app after the browser callback completes. A callback-URL paste
    fallback is available if needed. Never share that URL or your tokens in chat.
+   The token exchange waits until Pi is foregrounded and Android exposes an active
+   network. Return within two minutes; cancellation discards the pending request.
 4. Send a message. If the selected model is unavailable to your account, use **Model**.
 5. Force-stop and reopen the app. The conversation should reappear. Send another
    message to check that credentials survived the restart.
@@ -86,6 +88,9 @@ machines should use the general build instructions above.
 - Kotlin/Android APK compilation, TypeScript checking and Android lint.
 - Diagnostic log privacy, bounded persistence, restart recovery, concurrent writes,
   and HTTP instrumentation preserving requests and response bodies.
+- Browser callback completion while backgrounded, delayed token exchange until
+  foreground network access returns, cancellation, timeout, and no automatic replay
+  of a sent authorization code. The Javet probe checks the native readiness method.
 - DNS bridging: actual HTTP fetch through the resolver bridge, IPv4/IPv6 ordering,
   resolver failure and cleanup, and HTTPS certificate/hostname verification.
   The Javet probe also exercises Java DNS callbacks and a real HTTP fetch.
@@ -130,8 +135,12 @@ shipping both native libraries to a phone. ARM64 ELF segments have 16 KB alignme
 Node hostname lookups use Android's `InetAddress` resolver on background workers.
 Results return to the owning Javet thread before invoking JavaScript callbacks.
 This routes lookups through Android's active network, VPN and Private DNS settings.
-The affected phone still reports `ENOTFOUND`; exported diagnostics are needed to
-identify where it fails. OAuth
+The affected phone reports no active network during token exchange while the
+browser is foregrounded, even with its VPN disabled. Token requests now wait for
+the Activity to resume and Android to expose a network. This addresses the observed
+timing, but successful login still needs validation on the phone. Exported logs
+include foreground state, Data Saver, power saving and background restrictions.
+OAuth
 exchange, refresh and API calls keep their original TLS hostname and certificate
 verification; the app does not hardcode DNS servers or service IP addresses.
 

@@ -63,10 +63,10 @@ class DiagnosticLog(private val file: File) {
     }
 
     companion object {
-        private val EVENTS = setOf("app.start", "runtime.start", "runtime.failure", "oauth.start", "oauth.browser", "oauth.exchange", "oauth.success", "oauth.failure", "http.start", "http.response", "http.failure", "error.cause", "dns.bridge.installed", "dns.lookup.start", "dns.lookup.finish", "dns.native.start", "dns.native.finish", "network.snapshot", "credentials.read", "credentials.write", "diagnostics.export")
+        private val EVENTS = setOf("app.start", "app.foreground", "runtime.start", "runtime.failure", "oauth.start", "oauth.browser", "oauth.exchange", "oauth.success", "oauth.failure", "oauth.network.wait", "oauth.network.ready", "oauth.network.timeout", "http.start", "http.response", "http.failure", "error.cause", "dns.bridge.installed", "dns.lookup.start", "dns.lookup.finish", "dns.native.start", "dns.native.finish", "network.snapshot", "credentials.read", "credentials.write", "diagnostics.export")
         private val HOSTS = setOf("auth.openai.com", "api.openai.com", "localhost", "127.0.0.1", "::1")
         private val NUMBERS = setOf("id", "family", "hints", "ipv4Count", "ipv6Count", "dnsServerCount", "durationMs", "status", "depth", "versionCode")
-        private val BOOLEANS = setOf("all", "activeNetwork", "wifi", "cellular", "ethernet", "vpn", "internet", "validated", "privateDns", "privateDnsConfigured", "bridgeInstalled", "httpProxyConfigured", "httpsProxyConfigured", "allProxyConfigured", "noProxyConfigured")
+        private val BOOLEANS = setOf("all", "foreground", "dataSaver", "powerSave", "backgroundRestricted", "activeNetwork", "wifi", "cellular", "ethernet", "vpn", "internet", "validated", "privateDns", "privateDnsConfigured", "bridgeInstalled", "httpProxyConfigured", "httpsProxyConfigured", "allProxyConfigured", "noProxyConfigured")
         private val STRINGS = mapOf(
             "stage" to setOf("prepare", "browser", "exchange", "credentials", "runtime", "http", "dns"),
             "result" to setOf("ok", "failed", "cancelled", "timeout", "present", "absent"),
@@ -74,7 +74,7 @@ class DiagnosticLog(private val file: File) {
             "method" to setOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"),
             "syscall" to setOf("getaddrinfo", "connect", "lookup", "read", "write"),
             "errorType" to setOf("Error", "TypeError", "AggregateError", "AbortError", "ModelsError", "UnknownHostException", "SecurityException", "GaiException", "IOException", "SocketTimeoutException", "JavetException", "JavetExecutionException", "JavetCompilationException", "IllegalStateException", "RuntimeException"),
-            "code" to setOf("ENOTFOUND", "EAI_AGAIN", "EAI_NODATA", "EAI_NONAME", "EAI_FAIL", "EAI_SYSTEM", "EAI_MEMORY", "EAI_FAMILY", "EAI_SERVICE", "EAI_SOCKTYPE", "EAI_BADFLAGS", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENETUNREACH", "EHOSTUNREACH", "EACCES", "EPERM", "ECANCELED", "ERR_SSL_CERTIFICATE_VERIFY_FAILED", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "DEPTH_ZERO_SELF_SIGNED_CERT", "ERR_TLS_CERT_ALTNAME_INVALID", "CERT_HAS_EXPIRED", "UND_ERR_CONNECT_TIMEOUT", "FETCH_FAILED", "ANDROID_CREDENTIAL_WRITE_FAILED")
+            "code" to setOf("ENOTFOUND", "EAI_AGAIN", "EAI_NODATA", "EAI_NONAME", "EAI_FAIL", "EAI_SYSTEM", "EAI_MEMORY", "EAI_FAMILY", "EAI_SERVICE", "EAI_SOCKTYPE", "EAI_BADFLAGS", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENETUNREACH", "EHOSTUNREACH", "EACCES", "EPERM", "ECANCELED", "ANDROID_NETWORK_UNAVAILABLE", "ERR_SSL_CERTIFICATE_VERIFY_FAILED", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "DEPTH_ZERO_SELF_SIGNED_CERT", "ERR_TLS_CERT_ALTNAME_INVALID", "CERT_HAS_EXPIRED", "UND_ERR_CONNECT_TIMEOUT", "FETCH_FAILED", "ANDROID_CREDENTIAL_WRITE_FAILED")
         )
     }
 }

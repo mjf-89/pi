@@ -14,16 +14,22 @@ globalThis.probeFailure = '';
   let app;
   try {
     // Exercise the production startup bridge and a real HTTP request using Java's resolver.
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (input, init) => String(input) === 'https://auth.openai.com/api/accounts/oauth/token'
+      ? Promise.resolve(new Response('fake token response')) : originalFetch(input, init);
     globalThis.dnsProbeApp = start(globalThis.nativeHost, directory);
     const server = http.createServer((_request, response) => response.end('resolved through Java'));
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
+      const tokenResponse = await fetch('https://auth.openai.com/api/accounts/oauth/token', { method: 'POST' });
+      assert.equal(await tokenResponse.text(), 'fake token response');
       const response = await fetch(`http://localhost:${server.address().port}/`);
       assert.equal(await response.text(), 'resolved through Java');
     } finally {
       server.closeAllConnections();
       await new Promise(resolve => server.close(resolve));
       await globalThis.dnsProbeApp.close();
+      globalThis.fetch = originalFetch;
     }
     // Exercise the production provider initialization and the exact native callback binding.
     app = await createApp(globalThis.nativeHost, directory);

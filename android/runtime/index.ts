@@ -11,6 +11,7 @@ import { AndroidCredentialStore, type CredentialHost } from "./credentials.ts";
 import { loginError } from "./auth-errors.ts";
 import { installAndroidDns, type AndroidDnsHost } from "./android-dns.ts";
 import { installHttpDiagnostics, recordError, type DiagnosticSink } from "./diagnostics.ts";
+import { installOAuthNetworkGate, type OAuthNetworkHost } from "./oauth-network.ts";
 
 export interface NativeHost extends CredentialHost {
   emit(json: string): void;
@@ -173,7 +174,7 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
 }
 
 /** Synchronous entry point for Javet. All commands and callbacks stay on its worker thread. */
-export function start(host: NativeHost & AndroidDnsHost, directory: string) {
+export function start(host: NativeHost & AndroidDnsHost & OAuthNetworkHost, directory: string) {
   const diagnose: DiagnosticSink = (event, fields) => host.diagnostic?.(JSON.stringify({ event, fields }));
   diagnose("runtime.start", { nodeVersion: process.versions.node,
     httpProxyConfigured: Boolean(process.env.HTTP_PROXY || process.env.http_proxy),
@@ -182,6 +183,10 @@ export function start(host: NativeHost & AndroidDnsHost, directory: string) {
     noProxyConfigured: Boolean(process.env.NO_PROXY || process.env.no_proxy) });
   const dns = installAndroidDns(host, diagnose);
   const restoreHttp = installHttpDiagnostics(diagnose);
+  const restoreOAuth = installOAuthNetworkGate(host, diagnose, () => {
+    host.emit(JSON.stringify({ type: "auth_prompt_closed" }));
+    host.emit(JSON.stringify({ type: "notice", message: "Return to Pi Durable to finish sign-in. Waiting for network access…" }));
+  });
   const ready = createApp(host, directory, { diagnostics: (event, fields) => diagnose(event, { ...fields, bridgeInstalled: dns.isInstalled() }) });
   void ready.catch(error => {
     diagnose("runtime.failure", { stage: "runtime" });
@@ -194,6 +199,6 @@ export function start(host: NativeHost & AndroidDnsHost, directory: string) {
       void ready.then(app => app.command(JSON.parse(json))).catch(error =>
         host.emit(JSON.stringify({ type: "error", message: safeError(error) })));
     },
-    async close() { try { await (await ready).close(); } finally { restoreHttp(); dns.close(); } },
+    async close() { restoreOAuth(); try { await (await ready).close(); } finally { restoreHttp(); dns.close(); } },
   };
 }

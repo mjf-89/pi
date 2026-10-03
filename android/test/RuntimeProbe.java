@@ -13,7 +13,9 @@ public final class RuntimeProbe {
         String latest = "";
         final ConcurrentLinkedQueue<String> dnsResults = new ConcurrentLinkedQueue<>();
         int dnsLookups = 0;
+        int networkChecks = 0;
         @V8Function public void emit(String json) { latest = json; }
+        @V8Function public boolean networkReady() { networkChecks++; return true; }
         @V8Function public String readCredential() { return ""; }
         @V8Function public void writeCredential(String value) { throw new AssertionError("No real credentials in this probe"); }
         @V8Function public String deviceId() { return "a17d00f0-7384-4b4a-bdac-667d1d137e48"; }
@@ -60,6 +62,7 @@ public final class RuntimeProbe {
             String failure = runtime.getGlobalObject().getString("probeFailure");
             if (!failure.isEmpty()) throw new AssertionError(failure);
             if (host.dnsLookups == 0) throw new AssertionError("HTTP fetch did not use the Java DNS bridge");
+            if (host.networkChecks == 0) throw new AssertionError("OAuth did not check Java network readiness");
             if (!host.latest.contains("Answer from embedded Node.")) throw new AssertionError("Conversation was not restored: " + host.latest);
             try (V8ValueObject nativeObject = runtime.getGlobalObject().get("nativeHost")) {
                 nativeObject.unbind(host);

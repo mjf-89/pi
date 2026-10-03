@@ -10,8 +10,8 @@ android {
         applicationId = "dev.pi.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.1.3-poc"
+        versionCode = 5
+        versionName = "0.1.4-poc"
         if (providers.gradleProperty("diagnostic").orNull == "true") {
             applicationIdSuffix = ".diagnostic"
             resValue("string", "app_name", "Pi Durable Diagnostics")

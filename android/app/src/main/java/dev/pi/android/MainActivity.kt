@@ -107,6 +107,14 @@ class MainActivity : Activity() {
         setContentView(root)
         runtime.attach(listener)
     }
+    override fun onResume() {
+        super.onResume()
+        runtime.setForeground(true)
+    }
+    override fun onPause() {
+        runtime.setForeground(false)
+        super.onPause()
+    }
     override fun onSaveInstanceState(state: Bundle) {
         state.putString("draft", input.text.toString())
         super.onSaveInstanceState(state)

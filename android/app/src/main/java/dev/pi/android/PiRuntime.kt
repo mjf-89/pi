@@ -1,9 +1,11 @@
 package dev.pi.android
 
 import android.content.Context
+import android.app.ActivityManager
 import android.os.Handler
 import android.os.Looper
 import android.os.Build
+import android.os.PowerManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import com.caoccao.javet.annotations.V8Function
@@ -36,6 +38,13 @@ class PiRuntime(private val context: Context) {
     private var authPrompt: JSONObject? = null
     private var authUrl: String? = null
     private var started = false
+    @Volatile private var foreground = false
+
+    fun setForeground(value: Boolean) {
+        foreground = value
+        diagnostics.record("app.foreground", JSONObject().put("foreground", value))
+        recordNetwork()
+    }
 
     fun attach(listener: (JSONObject) -> Unit) {
         check(Looper.myLooper() == Looper.getMainLooper())
@@ -55,6 +64,9 @@ class PiRuntime(private val context: Context) {
             val capabilities = manager.getNetworkCapabilities(network)
             val properties = manager.getLinkProperties(network)
             val fields = JSONObject().put("activeNetwork", network != null)
+                .put("foreground", foreground)
+                .put("dataSaver", manager.restrictBackgroundStatus == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED)
+                .put("powerSave", (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isPowerSaveMode)
                 .put("wifi", capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true)
                 .put("cellular", capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true)
                 .put("ethernet", capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true)
@@ -64,6 +76,7 @@ class PiRuntime(private val context: Context) {
                 .put("dnsServerCount", properties?.dnsServers?.size ?: 0)
             if (Build.VERSION.SDK_INT >= 28) fields.put("privateDns", properties?.isPrivateDnsActive == true)
                 .put("privateDnsConfigured", !properties?.privateDnsServerName.isNullOrEmpty())
+                .put("backgroundRestricted", (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).isBackgroundRestricted)
             diagnostics.record("network.snapshot", fields)
         } catch (error: Exception) { recordFailure("dns", error) }
     }
@@ -120,6 +133,8 @@ class PiRuntime(private val context: Context) {
 
     // Only explicit bridge methods are exposed to Node, not general JVM access.
     inner class NativeHost {
+        @V8Function fun networkReady(): Boolean = foreground &&
+            (context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).activeNetwork != null
         @V8Function fun emit(json: String) { publish(json) }
         @V8Function fun readCredential(): String = try {
             credentials.read().also { diagnostics.record("credentials.read", JSONObject().put("result", if (it.isEmpty()) "absent" else "present")) }

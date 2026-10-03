@@ -17,6 +17,7 @@ export function loginError(error: unknown, stage: "prepare" | "browser" | "excha
   let current: unknown = error;
   let code: string | undefined;
   for (let depth = 0; depth < 4 && current instanceof Error; depth++) {
+    if ("code" in current && current.code === "ANDROID_NETWORK_UNAVAILABLE") return "Sign-in is waiting for Android network access. Return to Pi Durable with Wi-Fi or mobile data connected, then sign in again.";
     if (current.message === "ANDROID_CREDENTIAL_WRITE_FAILED") return "ChatGPT authorized sign-in, but Android could not save the credentials securely (ANDROID_CREDENTIAL_WRITE_FAILED).";
     if ("code" in current && typeof current.code === "string" && codes.has(current.code)) { code = current.code; break; }
     current = current.cause;

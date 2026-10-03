@@ -1,8 +1,8 @@
-name: Publish Android diagnostic log export
+name: Publish Android foreground sign-in fix
 
 on:
   push:
-    branches: [release/android-poc-export-logs]
+    branches: [release/android-poc-foreground-login]
 
 permissions:
   contents: write
@@ -52,14 +52,14 @@ jobs:
           cp android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk pi-android-poc-arm64.apk
           sha256sum pi-android-poc-arm64.apk > SHA256SUMS
           cat > /tmp/preview-notes.md <<'NOTES'
-          Adds **Export diagnostics** to the main screen and error dialogs. Reproduce the sign-in failure, tap Export diagnostics, and save the JSON file using Android's file picker.
+          Defers the OAuth token request until Pi Durable is foregrounded and Android exposes an active network. After completing sign-in in your browser, return to Pi Durable within two minutes to finish. This addresses logs showing ENOTFOUND with no active app network during the browser callback, despite Wi-Fi being available before and after. Device confirmation is still needed.
 
-          The log includes the installed version and commit, Android network/VPN/Private DNS state, native and Node DNS lookup outcomes, OAuth stages, HTTP status codes, durations, and sanitized error causes. The bounded log survives app restarts. It excludes tokens, authorization codes, callback URLs, headers, response bodies, device IDs and conversation text. Unknown fields and values are removed before persistence and export.
+          The browser callback remains available in the background. Cancellation discards the queued token request, waiting is bounded, and a sent authorization code is never automatically replayed. Network/VPN routing and TLS verification are unchanged. **Export diagnostics** now also records foreground state, Data Saver, power saving, background restrictions and network waiting. Tokens and conversation text are excluded.
 
           Download `pi-android-poc-arm64.apk` for ARM64 Android phones, including Nothing devices. Requires Android 8.0 or newer. This is the regular **Pi Durable** app. Earlier previews used disposable CI debug keys: uninstall the original Pi Durable app before installing this build. Uninstalling clears that app's local data. The separate Diagnostics app can remain installed.
 
-          Validation passed: APK compilation, Android lint, TypeScript checks, native diagnostic-log privacy/persistence/concurrency tests, JavaScript HTTP diagnostics and runtime/DNS tests, embedded Javet HTTP/DNS checks, and APK signature verification. The persistent ENOTFOUND failure on the affected phone remains under investigation; attach the exported JSON after reproducing it.
+          Validation passed: APK compilation, Android lint, TypeScript checks, native diagnostic-log privacy/persistence/concurrency tests, OAuth callback/foreground/network sequencing, cancellation and timeout tests, runtime/DNS tests, embedded Javet native readiness and HTTP/DNS checks, and APK signature verification. If sign-in still fails after returning to Pi Durable, attach the exported JSON.
 
           The APK was built on GitHub Actions. SHA-256 is recorded in the attached SHA256SUMS file.
           NOTES
-          gh release create android-poc-preview-0.1.3 pi-android-poc-arm64.apk SHA256SUMS --repo mjf-89/pi --target "$GITHUB_SHA" --prerelease --latest=false --title 'Android PoC 0.1.3 — Export diagnostics' --notes-file /tmp/preview-notes.md
+          gh release create android-poc-preview-0.1.4 pi-android-poc-arm64.apk SHA256SUMS --repo mjf-89/pi --target "$GITHUB_SHA" --prerelease --latest=false --title 'Android PoC 0.1.4 — Wait for foreground network access' --notes-file /tmp/preview-notes.md
