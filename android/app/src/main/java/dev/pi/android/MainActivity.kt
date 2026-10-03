@@ -22,6 +22,8 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.CheckBox
+import android.widget.ImageButton
 import org.json.JSONObject
 import java.util.UUID
 
@@ -31,7 +33,7 @@ class MainActivity : Activity() {
     private lateinit var login: Button
     private lateinit var model: Button
     private lateinit var send: Button
-    private lateinit var stop: Button
+    private lateinit var stop: ImageButton
     private lateinit var deviceTask: Button
     private lateinit var input: EditText
     private lateinit var messages: LinearLayout
@@ -40,6 +42,7 @@ class MainActivity : Activity() {
     private var signingIn = false
     private var currentModel = "gpt-6-sol"
     private var modelIds = listOf<String>()
+    private var defaultDeviceModel = "gpt-6-luna"
     private var manualDialog: AlertDialog? = null
     private var pendingBrowserUrl: String? = null
     private val listener: (JSONObject) -> Unit = { event -> onEvent(event) }
@@ -97,7 +100,15 @@ class MainActivity : Activity() {
         }
         root.addView(input)
         val actions = LinearLayout(this).apply { gravity = Gravity.END }
-        stop = button("Stop") { (application as PiApplication).automation.end(true); command("stop") }.apply { isEnabled = false }
+        stop = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_stop_task)
+            contentDescription = getString(R.string.stop_pi)
+            background = android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(Color.rgb(90, 60, 65)),
+                GradientDrawable().apply { setColor(Color.rgb(27, 32, 41)); cornerRadius = dp(24).toFloat() }, null)
+            setPadding(dp(13), dp(13), dp(13), dp(13))
+            visibility = View.GONE
+            setOnClickListener { (application as PiApplication).automation.end(true); command("stop") }
+        }
         send = button("Send") {
             val value = input.text.toString().trim()
             if (value.isNotEmpty()) {
@@ -106,7 +117,9 @@ class MainActivity : Activity() {
                 input.setText("")
             }
         }.apply { isEnabled = false }
-        actions.addView(stop); actions.addView(send)
+        actions.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        actions.addView(stop, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginEnd = dp(8) })
+        actions.addView(send)
         root.addView(actions)
         setContentView(root)
         runtime.attach(listener)
@@ -128,27 +141,42 @@ class MainActivity : Activity() {
         val automation = (application as PiApplication).automation
         if (automation.service == null) {
             AlertDialog.Builder(this).setTitle("Enable device assistance")
-                .setMessage("Enable Pi Durable in Android Accessibility settings, then return here. Pi reads the selected app only during a task you start. Screen text is sent to OpenAI and stored in your local conversation. Password fields are excluded.")
+                .setMessage("Enable Pi Durable in Android Accessibility settings, then return here. Pi reads apps only during tasks you start. App names and screen text are sent to OpenAI and stored in your local conversation. Password fields are excluded.")
                 .setPositiveButton("Open accessibility") { _, _ -> startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
                 .setNegativeButton("Cancel", null).show()
             return
         }
-        val apps = listOf("Settings" to "com.android.settings") + packageManager.queryIntentActivities(
-            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
-            .map { it.loadLabel(packageManager).toString() to it.activityInfo.packageName }
-            .filter { it.second != packageName && it.second != "com.android.settings" }.distinctBy { it.second }.sortedBy { it.first }
+        val preferences = getSharedPreferences("device-task-options", MODE_PRIVATE)
+        val apps = automation.launchableApps().map { it.value to it.key }.sortedBy { it.first }
         val picker = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, apps.map { "${it.first} (${it.second})" }) }
+        picker.setSelection(apps.indexOfFirst { it.second == preferences.getString("app", "com.android.settings") }.coerceAtLeast(0))
+        val automatic = CheckBox(this).apply { setText(R.string.auto_choose_apps); isChecked = preferences.getBoolean("automaticApps", true) }
+        picker.visibility = if (automatic.isChecked) View.GONE else View.VISIBLE
+        automatic.setOnCheckedChangeListener { _, checked -> picker.visibility = if (checked) View.GONE else View.VISIBLE }
+        val confirm = CheckBox(this).apply { setText(R.string.confirm_each_action); isChecked = preferences.getBoolean("confirmActions", false) }
+        val taskModels = (listOf(defaultDeviceModel) + modelIds).distinct()
+        val modelPicker = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+            taskModels.map { if (it == defaultDeviceModel) "$it (fast default)" else it }) }
+        modelPicker.setSelection(taskModels.indexOf(preferences.getString("model", defaultDeviceModel)).coerceAtLeast(0))
         val task = EditText(this).apply {
-            hint = "What should Pi do in this app?"
+            hint = "What should Pi do?"
             setText(input.text.toString().ifBlank { "Open Settings, navigate to About phone, and report the device model. Do not change settings." })
             minLines = 2; maxLines = 5
         }
-        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), 0, dp(20), 0); addView(picker); addView(task) }
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(20), 0, dp(20), 0)
+            addView(task); addView(automatic); addView(picker); addView(confirm)
+            addView(text("Device-task model", 14f)); addView(modelPicker)
+        }
         AlertDialog.Builder(this).setTitle("Start a device task")
-            .setMessage("Pi will read this app’s visible screen text and send it to OpenAI. Tool results stay in the local conversation. Taps, text entry and Back need your approval. Use the floating Stop Pi button to end access. Tasks expire after 5 minutes.")
-            .setView(form).setPositiveButton("Start task") { _, _ ->
+            .setMessage("App names and screen text go to OpenAI and stay in the local conversation. Routine actions run automatically unless you enable confirmation. Consequential actions may still ask. The floating stop control ends access; tasks expire after 5 minutes.")
+            .setView(ScrollView(this).apply { addView(form) }).setPositiveButton("Start task") { _, _ ->
                 try {
-                    automation.begin(apps[picker.selectedItemPosition].second, task.text.toString().take(4000))
+                    val target = apps[picker.selectedItemPosition].second
+                    val taskModel = taskModels[modelPicker.selectedItemPosition]
+                    automation.begin(target, task.text.toString().take(4000), automatic.isChecked, confirm.isChecked, taskModel)
+                    preferences.edit().putBoolean("automaticApps", automatic.isChecked).putBoolean("confirmActions", confirm.isChecked)
+                        .putString("app", target).putString("model", taskModel).apply()
                     deviceTask.isEnabled = false
                     input.setText("")
                 } catch (error: Exception) { showError(error.message ?: "Could not start device task.") }
@@ -206,12 +234,14 @@ class MainActivity : Activity() {
                 currentModel = event.getString("model")
                 val available = event.getJSONArray("models")
                 modelIds = (0 until available.length()).map { available.getString(it) }
+                defaultDeviceModel = event.optString("defaultDeviceModel", currentModel)
                 status.text = getString(R.string.runtime_status, event.getString("node"), currentModel, version)
                 login.text = if (signingIn) "Cancel sign-in" else if (authenticated) "ChatGPT connected" else "Sign in with ChatGPT"
                 login.isEnabled = true
                 model.isEnabled = !busy && !signingIn
                 send.isEnabled = authenticated && !busy && !signingIn
                 stop.isEnabled = busy
+                stop.visibility = if (busy) View.VISIBLE else View.GONE
                 deviceTask.isEnabled = authenticated && !busy && !signingIn && !(application as PiApplication).automation.running
                 messages.removeAllViews()
                 val transcript = event.getJSONArray("messages")

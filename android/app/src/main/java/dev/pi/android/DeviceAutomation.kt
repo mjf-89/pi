@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import org.json.JSONObject
+import org.json.JSONArray
 
 /** All service and session access runs on the main thread. No screen text is logged here. */
 class DeviceAutomation(private val app: PiApplication) {
@@ -14,18 +15,37 @@ class DeviceAutomation(private val app: PiApplication) {
     @Volatile var running = false
         private set
     private var task = ""
+    private var taskModel = ""
+    private var availableApps: Map<String, String> = emptyMap()
     private var pendingId: Int? = null
     private var pendingAction = ""
     private var reply: ((String) -> Unit)? = null
     private val taskServiceIntent = Intent(app, DeviceTaskService::class.java)
 
-    fun begin(target: String, instruction: String) {
+    @Suppress("DEPRECATION")
+    fun launchableApps(): Map<String, String> = (mapOf("com.android.settings" to "Settings") + app.packageManager.queryIntentActivities(
+        Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+        .associate { it.activityInfo.packageName to it.loadLabel(app.packageManager).toString() })
+        .filterKeys { it != app.packageName }.toSortedMap()
+
+    fun appList(): JSONObject {
+        val apps = JSONArray()
+        availableApps.forEach { (pkg, name) -> apps.put(JSONObject().put("package", pkg).put("name", name.take(120))) }
+        return JSONObject().put("ok", true).put("apps", apps).put("automaticApps", session.automaticApps)
+            .put("confirmActions", session.confirmActions).put("currentPackage", session.target)
+    }
+
+    fun begin(target: String, instruction: String, automatic: Boolean, confirm: Boolean, model: String) {
+        check(session.id == null) { "A device task is already running." }
         check(service != null) { "Enable Pi Durable in Android Accessibility settings first." }
         check(instruction.isNotBlank()) { "Enter a device task first." }
         check(target != app.packageName) { "Pi cannot control its own approval UI." }
-        val id = session.start(target)
+        val candidates = launchableApps()
+        availableApps = if (automatic) candidates else candidates.filterKeys { it == target }
+        val id = session.start(if (automatic) "" else target, automatic, confirm, availableApps.keys)
         app.runtime.deviceEvent("device.start")
         task = instruction
+        taskModel = model
         try {
             app.startForegroundService(Intent(app, DeviceTaskService::class.java).putExtra("session", id))
             main.postDelayed({ if (session.id == id) end(true) }, 5 * 60_000)
@@ -39,8 +59,9 @@ class DeviceAutomation(private val app: PiApplication) {
         running = true
         app.runtime.deviceEvent("device.ready", result = "ok")
         app.runtime.send(JSONObject().put("type", "device_send").put("session", id)
-            .put("text", task).put("requestId", id))
+            .put("text", task).put("requestId", id).put("deviceModelId", taskModel).put("deviceContext", appList().toString()))
         task = ""
+        taskModel = ""
     }
 
     fun end(abort: Boolean, expected: String? = null) {
@@ -50,6 +71,7 @@ class DeviceAutomation(private val app: PiApplication) {
         session.stop()
         running = false
         task = ""
+        availableApps = emptyMap()
         service?.clearControls()
         if (!abort && wasActive) try { service?.returnToPi() } catch (_: Exception) {}
         finish(JSONObject().put("ok", false).put("error", "Device task stopped."))

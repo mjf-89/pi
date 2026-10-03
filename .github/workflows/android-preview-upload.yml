@@ -1,8 +1,8 @@
-name: Publish Android accessibility preview
+name: Publish Android automation preview
 
 on:
   push:
-    branches: [release/android-poc-accessibility]
+    branches: [release/android-poc-fast-navigation]
 
 permissions:
   contents: write
@@ -52,16 +52,20 @@ jobs:
           cp android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk pi-android-poc-arm64.apk
           sha256sum pi-android-poc-arm64.apk > SHA256SUMS
           cat > /tmp/preview-notes.md <<'NOTES'
-          Adds **Run device task**: choose one app, describe a task, and let Pi inspect its accessibility controls and navigate. First milestone: choose Settings and ask Pi to open About phone and report the device model without changing settings.
+          **Run device task** now chooses the appropriate installed app automatically and can switch apps when needed for your task. Disable **Choose apps automatically** to restrict it to one app. Routine actions run without prompts by default; enable **Confirm each action** to restore step-by-step approval. Preferences are saved.
 
-          Enable Pi Durable in Android Accessibility settings yourself, then return to Pi to start a task. For sideloaded apps Android may require **Allow restricted settings** in App info first. Screen text from the selected app goes to OpenAI and is stored in the local conversation. Password and Android-marked sensitive nodes are excluded. Diagnostic exports still exclude screen and conversation text.
+          Device tasks default to **gpt-6-luna** with reasoning off. Choose another device-task model in the task dialog. The previous chat model is restored after completion, cancellation, or restart. Actions wait 250 ms before observing the screen (350 ms for app launches), and the model is instructed to reuse fresh observations instead of requesting duplicate reads. Phone latency has not been benchmarked.
 
-          Taps, text entry and Back require **Allow once** on the phone. A floating **Stop Pi** button and foreground-service notification end access. Tasks are limited to one selected app, five minutes and 60 operations; access is revoked after completion or process death. Stale nodes are rejected, actions return fresh observations, and interrupted actions are not automatically replayed. The foreground service supports model networking while another app is visible.
+          The floating control is now a compact dark **Pi** pill with a clear stop icon and 48 dp touch target. Drag the Pi label to reposition it. Chat uses a matching stop icon, visible only while working. Stop revokes device access immediately.
+
+          Enable Pi Durable in Android Accessibility settings yourself. Sideloaded apps may need **Allow restricted settings** in App info first. App names and visible screen text go to OpenAI and are stored in the local conversation. Password and Android-marked sensitive nodes are excluded. Diagnostic exports exclude screen and conversation text. Model-marked consequential actions, checkable controls, and labels such as Send, Pay or Delete still require **Allow once**. These are heuristics, not a guarantee of detecting every consequential action.
+
+          Tasks expire after five minutes or 60 operations. Native code enforces the allowed app list, stale-node checks and ephemeral authorization. Interrupted actions are not automatically replayed. Semantic accessibility controls only; no screenshots or coordinate gestures.
 
           Download `pi-android-poc-arm64.apk` for ARM64 Android phones, including Nothing devices. Requires Android 8.0 or newer. This is the regular **Pi Durable** app. Earlier previews used disposable CI debug keys: uninstall the original Pi Durable app before installing this build. Uninstalling clears that app's local data. The separate Diagnostics app can remain installed.
 
-          Validation: TypeScript and Android compilation/lint; fake-model Settings tool loop; native session expiry/budget/revocation tests; bridge cancellation and stale-response tests; embedded Javet model-to-Java tool execution; existing OAuth/DNS/privacy checks. The accessibility and foreground-service flow still needs validation on Android hardware. Semantic controls only: no screenshots, coordinate gestures, or cross-app automation in this preview.
+          Validation: TypeScript and Android compilation/lint; fake-model app selection and fast-model tool loop; cancellation and chat-model restoration/restart tests; native app scope and confirmation policy tests; embedded Javet model-to-Java tool execution; existing OAuth/DNS/privacy checks. The 0.1.6 behavior and controls still need validation on Android hardware. The broader repository check has an existing unrelated Cloudflare model-name fixture failure.
 
           The APK was built on GitHub Actions. SHA-256 is recorded in the attached SHA256SUMS file.
           NOTES
-          gh release create android-poc-preview-0.1.5 pi-android-poc-arm64.apk SHA256SUMS --repo mjf-89/pi --target "$GITHUB_SHA" --prerelease --latest=false --title 'Android PoC 0.1.5 — Accessibility device tasks' --notes-file /tmp/preview-notes.md
+          gh release create android-poc-preview-0.1.6 pi-android-poc-arm64.apk SHA256SUMS --repo mjf-89/pi --target "$GITHUB_SHA" --prerelease --latest=false --title 'Android PoC 0.1.6 — Automatic apps, fast navigation and compact Stop' --notes-file /tmp/preview-notes.md

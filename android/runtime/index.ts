@@ -1,8 +1,8 @@
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels, createProvider, type AuthPrompt, type Provider } from "@earendil-works/pi-ai";
-import { createRegistry, Harness } from "@earendil-works/pi-durable";
+import { createRegistry, Harness, type Agent } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { openAIResponsesApi } from "pi-source/api/openai-responses.lazy";
 import { openaiChatGPTOAuth } from "pi-source/auth/oauth/openai-chatgpt";
@@ -57,11 +57,24 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
     models, registry, settings: { retry: { maxRetries: 2 } },
   }, context);
   const root = await harness.root(context, { agent: { model: { provider: provider.id, modelId } } });
+  const defaultDeviceModel = ["gpt-6-luna", "gpt-5.4-mini", "gpt-4.1-mini", modelId]
+    .find(id => models.getModel(provider.id, id))!;
+  const restorePath = join(directory, "device-model-restore.json");
+  type ChatSettings = Pick<Agent, "model" | "thinkingLevel">;
+  // A killed device task must not leave the conversation using its temporary model.
+  if (existsSync(restorePath)) {
+    const saved = JSON.parse(readFileSync(restorePath, "utf8")) as ChatSettings;
+    await root.abort(context);
+    await root.configure({ model: saved.model ?? null, thinkingLevel: saved.thinkingLevel }, context);
+    unlinkSync(restorePath);
+  }
   const watch = await root.watch(context);
   let view = watch.value;
   let login: AbortController | undefined;
   let pendingPrompt: { resolve: (value: string) => void; reject: (reason: Error) => void } | undefined;
   let closed = false;
+  let deviceRun: AbortController | undefined;
+  let deviceFinished: Promise<void> | undefined;
 
   const publish = () => {
     const messages: { role: string; text: string }[] = [];
@@ -76,7 +89,7 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
     const live = view.docs["pi.live"] as { run?: unknown; generation?: { message?: { content?: { type: string; text?: string }[] } } } | undefined;
     const agent = view.docs["pi.agent"] as { model?: { modelId: string } } | undefined;
     const partial = live?.generation?.message?.content?.filter(block => block.type === "text").map(block => block.text ?? "").join("") ?? "";
-    emit({ type: "state", messages, partial, busy: Boolean(live?.run), authenticated, signingIn: Boolean(login),
+    emit({ type: "state", messages, partial, busy: Boolean(live?.run) || Boolean(deviceRun), authenticated, signingIn: Boolean(login), defaultDeviceModel,
       model: agent?.model?.modelId ?? modelId, node: process.versions.node, storage: "SQLite",
       models: models.getModels(provider.id).map(model => model.id) });
   };
@@ -99,7 +112,7 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
     emit({ type: "auth_prompt", message: request.message, promptType: request.type });
   });
 
-  async function command(input: { type: string; text?: string; requestId?: string; modelId?: string; session?: string }) {
+  async function command(input: { type: string; text?: string; requestId?: string; modelId?: string; session?: string; deviceModelId?: string; deviceContext?: string }) {
     if (closed) throw new Error("Runtime is closed");
     switch (input.type) {
       case "state": publish(); return;
@@ -143,35 +156,67 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
       case "cancel_login": login?.abort(); return;
       case "auth_reply": pendingPrompt?.resolve(input.text ?? ""); return;
       case "logout":
+        deviceRun?.abort();
         options.deviceBridge?.end();
         login?.abort();
         await root.abort(context);
+        await deviceFinished;
         await models.logout(provider.id);
         authenticated = false;
         publish();
         return;
       case "model":
+        if (deviceRun) throw new Error("Wait for the device task to finish before changing the chat model.");
         if (!input.modelId || !models.getModel(provider.id, input.modelId)) throw new Error("Unknown model.");
         await root.configure({ model: { provider: provider.id, modelId: input.modelId } }, context);
         return;
       case "send":
       case "device_send": {
+        if (deviceRun) throw new Error("A device task is already running.");
         if (!authenticated) throw new Error("Sign in with ChatGPT first.");
         const text = input.text?.trim();
         if (!text || !input.requestId) throw new Error("A message and request ID are required.");
         const deviceTask = input.type === "device_send";
+        let previous: ChatSettings | undefined;
+        let finishDevice: (() => void) | undefined;
         if (deviceTask) {
           if (!input.session || !options.deviceBridge) throw new Error("Device task bridge is unavailable.");
-          options.deviceBridge.begin(input.session);
+          options.deviceBridge.begin(input.session, input.deviceContext);
+          deviceRun = new AbortController();
+          deviceFinished = new Promise(resolve => { finishDevice = resolve; });
+          publish();
         }
         try {
+          if (deviceTask) {
+            const chosen = input.deviceModelId || defaultDeviceModel;
+            if (!models.getModel(provider.id, chosen)) throw new Error("Unknown device-task model. Choose another model in Run device task.");
+            const agent = await root.agent(context);
+            previous = { model: agent.model, thinkingLevel: agent.thinkingLevel };
+            writeFileSync(`${restorePath}.tmp`, JSON.stringify(previous));
+            renameSync(`${restorePath}.tmp`, restorePath);
+            await root.configure({ model: { provider: provider.id, modelId: chosen }, thinkingLevel: "off" }, context);
+            deviceRun?.signal.throwIfAborted();
+          }
           const submission = await root.submit({ type: "input", content: text, requestId: input.requestId }, context);
+          if (deviceTask && deviceRun?.signal.aborted) await root.abort(context);
           const result = await submission.wait(context);
-          if (result.status !== "done") emit({ type: "error", message: "The input was not answered. Check your connection, model selection, and subscription access." });
+          if (result.status !== "done" && !deviceRun?.signal.aborted) emit({ type: "error", message: "The input was not answered. Check your connection, model selection, and subscription access." });
           return result;
-        } finally { if (deviceTask) options.deviceBridge?.end(); }
+        } catch (error) {
+          if (!deviceTask || !deviceRun?.signal.aborted) throw error;
+        } finally {
+          if (deviceTask) {
+            try {
+              options.deviceBridge?.end();
+              if (previous) {
+                await root.configure({ model: previous.model ?? null, thinkingLevel: previous.thinkingLevel }, context);
+                if (existsSync(restorePath)) unlinkSync(restorePath);
+              }
+            } finally { deviceRun = undefined; finishDevice?.(); publish(); }
+          }
+        }
       }
-      case "stop": options.deviceBridge?.end(); await root.abort(context); return;
+      case "stop": deviceRun?.abort(); options.deviceBridge?.end(); await root.abort(context); await deviceFinished; return;
       default: throw new Error("Unknown command.");
     }
   }
@@ -180,7 +225,10 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
     async close() {
       if (closed) return;
       closed = true;
+      deviceRun?.abort();
       options.deviceBridge?.end();
+      if (deviceRun) await root.abort(context);
+      await deviceFinished;
       login?.abort();
       await watch.stop();
       await harness.close(context);

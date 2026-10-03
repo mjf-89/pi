@@ -4,6 +4,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DeviceSessionTest {
+    @Test fun automaticSelectionStaysWithinInstalledAppsAndManualModeCannotSwitch() {
+        val session = DeviceSession { 0L }
+        val apps = setOf("settings", "calendar")
+        session.start("", automatic = true, confirm = false, apps = apps)
+        assertTrue(session.automaticApps)
+        assertFalse(session.confirmActions)
+        session.selectApp("settings")
+        session.selectApp("calendar")
+        assertEquals("calendar", session.target)
+        assertThrows(IllegalStateException::class.java) { session.selectApp("unlisted") }
+        session.stop()
+        assertFalse(session.automaticApps)
+        assertTrue(session.confirmActions)
+        assertThrows(IllegalStateException::class.java) { session.selectApp("settings") }
+        session.start("settings", apps = apps)
+        assertThrows(IllegalStateException::class.java) { session.selectApp("calendar") }
+        session.selectApp("settings")
+    }
     @Test fun authorizationsExpireAndAreNeverReusedAfterStop() {
         var time = 100L
         val session = DeviceSession { time }

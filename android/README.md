@@ -48,26 +48,35 @@ device IDs and conversation text are excluded. Export uses Android's file picker
 1. Sign in, then tap **Run device task**. Open Accessibility settings and enable
    **Pi Durable** yourself. Some Android versions require **Allow restricted
    settings** in Pi Durable's App info menu before enabling a sideloaded service.
-2. Return to Pi and tap **Run device task** again. Choose one app and describe the
-   task. The default milestone opens **Settings → About phone** and reads the model.
-3. Review the disclosure and tap **Start task**. Visible screen text goes to OpenAI
+2. Return to Pi and tap **Run device task** again. Describe the task. **Choose apps
+   automatically** is on by default; disable it to restrict Pi to one selected app.
+   **Confirm each action** is off by default; enable it for taps, typing, scrolling
+   and Back. Both choices and the device-task model are remembered.
+3. Review the disclosure and tap **Start task**. App names and visible screen text go to OpenAI
    as tool input and is stored in the local SQLite conversation, outside diagnostic logs.
-4. Pi opens the app and inspects its accessibility tree. Confirm taps, text entry
-   and Back using **Allow once**. Scrolling and observation run automatically.
-5. **Stop Pi** in the overlay or foreground-service notification immediately revokes
+4. Pi chooses and opens the relevant app and navigates automatically. Actions marked
+   consequential by the model, checkable controls, and controls with labels such as
+   Send, Pay or Delete still show **Allow once**. These checks are conservative
+   heuristics, not a guarantee of recognizing every consequential action.
+   Device tasks default to **gpt-6-luna** with reasoning off; choose another model
+   in the task dialog if needed. Your chat model is restored afterward, including
+   on restart after an interrupted task. Model requests still require network access.
+5. The compact dark **Pi** pill has a single-tap stop icon. Drag the Pi label to
+   move it out of the way. Stop in this pill or the foreground-service notification revokes
    access. Sessions also end at task completion, service disconnect, process death,
    or after five minutes. Completed tasks return to the Pi chat.
 
 Device tools are `device_open_app`, `device_read_screen`, `device_act` (tap, type,
 scroll), and `device_back`. They are sequential and never automatically replay an
-interrupted action. Native code enforces the selected package and ephemeral session;
+interrupted action. Native code enforces the task's installed-app list (or single
+selected package in manual mode) and ephemeral session;
 old node IDs and changed controls are rejected. Every action returns a new observation.
 At most 60 operations and 160 visible nodes per observation are permitted.
 Password and Android-marked sensitive nodes are omitted. Pi cannot control its own
 approval UI. No screen capture runs outside an explicitly started task.
 
 This preview uses semantic accessibility controls, not coordinate taps or screenshots.
-Apps with incomplete accessibility trees, secure screens, app-to-app transitions,
+Apps with incomplete accessibility trees, secure screens, unlisted app transitions,
 and OEM background restrictions may prevent tasks. The foreground service supports
 model networking while the selected app is visible. It does not guarantee execution
 under every device power policy. Verify the Settings milestone on the phone first.
@@ -133,7 +142,8 @@ fails at `packages/ai/test/stream.test.ts:705`: the Cloudflare fixture requests
 This is an existing issue outside the Android project; the fixture is unchanged.
 
 **Device-confirmed in 0.1.4:** ChatGPT sign-in and a real reply on a Nothing phone.
-**Not yet verified:** the new accessibility flow and foreground service on hardware,
+**Device-tested in 0.1.5:** initial accessibility tasks work, with reported latency.
+**Not yet verified:** 0.1.6 automatic app selection, task model and draggable controls on hardware,
 real credential refresh, or Android process-death recovery during a request.
 No Android device is attached to this cloud workspace; desktop tests do not verify
 Android AccessibilityService behavior on a phone.

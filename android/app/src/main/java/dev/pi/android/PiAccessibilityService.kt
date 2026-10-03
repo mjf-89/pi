@@ -3,24 +3,15 @@ package dev.pi.android
 import android.accessibilityservice.AccessibilityService
 import android.app.KeyguardManager
 import android.content.Intent
-import android.graphics.Color
-import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.view.Gravity
-import android.view.View
-import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.widget.ScrollView
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -32,7 +23,7 @@ class PiAccessibilityService : AccessibilityService() {
     private val nodes = linkedMapOf<String, Handle>()
     private var revision = 0L
     private var snapshotNumber = 0L
-    private var overlay: View? = null
+    private val taskControls by lazy { DeviceControls(this) { automation.end(true) } }
     private data class Handle(val node: AccessibilityNodeInfo, val fingerprint: String, val revision: Long)
 
     override fun onServiceConnected() { automation.service = this }
@@ -52,46 +43,14 @@ class PiAccessibilityService : AccessibilityService() {
     }
 
     fun clearControls() {
-        overlay?.let { try { getSystemService(WindowManager::class.java).removeView(it) } catch (_: Exception) {} }
-        overlay = null
+        taskControls.clear()
         nodes.values.forEach { it.node.recycle() }; nodes.clear()
     }
 
     fun showControls() = controls(null, null)
     fun returnToPi() { startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) }
     private fun controls(description: String?, approve: (() -> Unit)?) {
-        overlay?.let { getSystemService(WindowManager::class.java).removeView(it) }
-        overlay = null
-        if (automation.session.id == null) return
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(16, 8, 16, 8)
-            setBackgroundColor(Color.rgb(235, 242, 252))
-        }
-        val label = TextView(this).apply {
-            text = description ?: "Pi device task is active"
-            setTextColor(Color.BLACK); textSize = 14f
-            maxWidth = resources.displayMetrics.widthPixels - 64
-        }
-        if (description == null) panel.addView(label)
-        else panel.addView(ScrollView(this).apply { addView(label) }, LinearLayout.LayoutParams(
-            (300 * resources.displayMetrics.density).toInt().coerceAtMost(resources.displayMetrics.widthPixels - 64),
-            (150 * resources.displayMetrics.density).toInt()))
-        val buttons = LinearLayout(this)
-        if (approve != null) buttons.addView(Button(this).apply {
-            setText(R.string.allow_once); isAllCaps = false
-            setOnClickListener { showControls(); approve() }
-        })
-        buttons.addView(Button(this).apply {
-            setText(R.string.stop_pi); isAllCaps = false
-            setOnClickListener { automation.end(true) }
-        })
-        panel.addView(buttons)
-        val params = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT).apply { gravity = Gravity.TOP or Gravity.END; y = 80 }
-        getSystemService(WindowManager::class.java).addView(panel, params)
-        overlay = panel
+        if (automation.session.id != null) taskControls.show(description, approve)
     }
 
     private fun fingerprint(node: AccessibilityNodeInfo): String {
@@ -172,7 +131,7 @@ class PiAccessibilityService : AccessibilityService() {
                 if (!current()) fail("Device task stopped.")
                 else try { done(JSONObject().put("ok", success).put("screen", screen())) }
                 catch (_: Exception) { done(JSONObject().put("ok", success).put("observation", "Screen changed or left the selected app. Read the screen again.")) }
-            }, 500)
+            }, if (input.optString("action") == "open") 350 else 250)
         }
         fun applyNode(handle: Handle, action: String) {
             if (!current()) { fail("Device task stopped."); return }
@@ -203,7 +162,11 @@ class PiAccessibilityService : AccessibilityService() {
         when (val action = input.optString("action")) {
             "read" -> done(JSONObject().put("ok", true).put("screen", screen()))
             "open" -> {
-                val target = automation.session.target
+                val target = input.optString("packageName").ifBlank { automation.session.target }
+                check(target.isNotBlank()) { "Choose an app package from the task configuration." }
+                automation.session.selectApp(target)
+                nodes.values.forEach { it.node.recycle() }; nodes.clear()
+                revision++
                 val intent = if (target == "com.android.settings") Intent(Settings.ACTION_SETTINGS).setPackage(target)
                     else packageManager.getLaunchIntentForPackage(target) ?: error("Selected app cannot be opened.")
                 startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -211,18 +174,21 @@ class PiAccessibilityService : AccessibilityService() {
             }
             "back" -> {
                 val root = targetRoot(); root.recycle()
-                controls("Go back in ${automation.session.target}?", {
+                val goBack = {
                     if (!current()) fail("Device task stopped.")
                     else try { val active = targetRoot(); active.recycle(); afterAction(performGlobalAction(GLOBAL_ACTION_BACK)) }
                     catch (_: Exception) { fail("Selected app is no longer active.") }
-                })
+                }
+                if (automation.session.confirmActions) controls("Go back in ${automation.session.target}?", goBack) else goBack()
             }
             "tap", "type", "scroll" -> {
                 val handle = nodes[input.optString("nodeId")] ?: error("Unknown or stale node. Read the screen again.")
-                if (action == "scroll") applyNode(handle, action)
+                val targetLabel = label(handle.node)
+                val confirm = DeviceActionPolicy.needsConfirmation(automation.session.confirmActions,
+                    input.optBoolean("consequential", true), handle.node.isCheckable, "$targetLabel ${handle.node.viewIdResourceName.orEmpty()}")
+                if (!confirm) applyNode(handle, action)
                 else {
-                    val targetLabel = label(handle.node)
-                    val detail = if (action == "type") "Enter: ${input.optString("text").take(500)}\nInto: $targetLabel" else "Tap: $targetLabel"
+                    val detail = if (action == "type") "Enter: ${input.optString("text").take(500)}\nInto: $targetLabel" else "$action: $targetLabel"
                     controls("${automation.session.target}\n$detail", { applyNode(handle, action) })
                 }
             }
