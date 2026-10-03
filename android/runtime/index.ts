@@ -8,6 +8,7 @@ import { openAIResponsesApi } from "pi-source/api/openai-responses.lazy";
 import { openaiChatGPTOAuth } from "pi-source/auth/oauth/openai-chatgpt";
 import { OPENAI_MODELS } from "pi-source/providers/openai.models";
 import { AndroidCredentialStore, type CredentialHost } from "./credentials.ts";
+import { loginError } from "./auth-errors.ts";
 
 export interface NativeHost extends CredentialHost {
   emit(json: string): void;
@@ -98,11 +99,13 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
         publish();
         // The user completes login in the system browser; the Node callback stays alive.
         const timeout = setTimeout(() => controller.abort(), 10 * 60_000);
+        let stage: "prepare" | "browser" | "exchange" = "prepare";
         try {
           await models.login(provider.id, "oauth", {
             signal: controller.signal, prompt,
             notify: event => {
-              if (event.type === "auth_url") emit({ type: "auth_url", url: event.url });
+              if (event.type === "auth_url") { stage = "browser"; emit({ type: "auth_url", url: event.url }); }
+              if (event.type === "progress") stage = "exchange";
               if (event.type === "progress" || event.type === "info") emit({ type: "notice", message: event.message });
             },
           }, { getDeviceId: () => host.deviceId() });
@@ -110,9 +113,9 @@ export async function createApp(host: NativeHost, directory: string, options: Ap
           authenticated = true;
           harness.resume();
           emit({ type: "notice", message: "ChatGPT connected." });
-        } catch {
+        } catch (error) {
           // OAuth failures can contain token response bodies; never forward those to the UI or logs.
-          emit({ type: "error", message: controller.signal.aborted ? "Sign-in cancelled or timed out." : "ChatGPT sign-in failed. Try again; this account must support Pi subscription access." });
+          emit({ type: "error", message: controller.signal.aborted ? "Sign-in cancelled or timed out." : loginError(error, stage) });
         } finally {
           clearTimeout(timeout);
           login = undefined;

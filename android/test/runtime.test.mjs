@@ -124,3 +124,41 @@ test("cancelled login saves no credentials and releases the callback port for re
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("failed OAuth exchange reports its stage without exposing response bodies or credentials", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-android-auth-error-"));
+  const host = nativeHost();
+  const realFetch = globalThis.fetch;
+  const failures = [
+    () => new Response('secret-code=private-code&refresh_token=private-refresh', { status: 403 }),
+    () => { throw new TypeError("fetch failed private-code", { cause: Object.assign(new Error("private-refresh"), { code: "ENOTFOUND" }) }); },
+    () => new Response(JSON.stringify({ access_token: "private-code", refresh_token: "private-refresh", id_token: "private-id", expires_in: 3600, scope: "openid chatgpt.tokens.use.direct" })),
+  ];
+  let app;
+  try {
+    app = await createApp(host, directory);
+    for (const [index, failure] of failures.entries()) {
+      host.events.length = 0;
+      globalThis.fetch = async () => failure();
+      if (index === 2) host.writeCredential = () => { throw new Error("Private native failure with private-refresh"); };
+      const login = app.command({ type: "login" });
+      await waitFor(() => host.events.some(e => e.type === "auth_url"));
+      const authorize = new URL(host.events.find(e => e.type === "auth_url").url);
+      const callback = new URL(authorize.searchParams.get("redirect_uri"));
+      callback.searchParams.set("code", "private-code");
+      callback.searchParams.set("state", authorize.searchParams.get("state"));
+      callback.searchParams.set("client_id", "issued-test-client");
+      await realFetch(callback);
+      await login;
+      const error = host.events.find(e => e.type === "error");
+      assert.match(error.message, [/HTTP 403/, /exchanging.*ENOTFOUND/, /ANDROID_CREDENTIAL_WRITE_FAILED/][index]);
+      assert.doesNotMatch(JSON.stringify(host.events), /private-code|private-refresh|account must support/);
+      assert.equal(host.readCredential(), "");
+      assert.equal(host.events.filter(e => e.type === "state").at(-1).authenticated, false);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+    await app?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

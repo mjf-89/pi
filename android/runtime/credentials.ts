@@ -31,7 +31,10 @@ export class AndroidCredentialStore implements CredentialStore {
       const current = await this.read(providerId, options);
       const next = await fn(current);
       options?.signal?.throwIfAborted();
-      if (next !== undefined) this.host.writeCredential(JSON.stringify(next));
+      if (next !== undefined) {
+        try { this.host.writeCredential(JSON.stringify(next)); }
+        catch (cause) { throw new Error("ANDROID_CREDENTIAL_WRITE_FAILED", { cause }); }
+      }
       return next ?? current;
     });
   }

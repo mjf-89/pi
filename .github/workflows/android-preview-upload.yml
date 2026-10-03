@@ -1,8 +1,8 @@
-name: Publish Android PoC preview
+name: Publish Android sign-in diagnostics
 
 on:
   push:
-    branches: [release/android-poc-preview-upload]
+    branches: [release/android-poc-diagnostics]
 
 permissions:
   contents: write
@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: f66c4edc69b7c65e3e8ac292223183bc9568d8f6
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -38,22 +38,21 @@ jobs:
           npm run bundle
           npm run check
           node --test test/runtime.test.mjs
-          ./gradlew --no-daemon :app:assembleDebug :app:lintDebug
+          ./gradlew --no-daemon -Pdiagnostic=true :app:assembleDebug :app:lintDebug
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
       - name: Attach APK and update release notes
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk pi-android-poc-arm64.apk
-          sha256sum pi-android-poc-arm64.apk > SHA256SUMS
-          gh release upload android-poc-preview-0.1.0 pi-android-poc-arm64.apk SHA256SUMS --repo mjf-89/pi
+          cp android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk pi-android-diagnostics-arm64.apk
+          sha256sum pi-android-diagnostics-arm64.apk > SHA256SUMS
           cat > /tmp/preview-notes.md <<'NOTES'
-          Android embedded Node proof of concept for Pi Durable, built from commit f66c4edc69b7c65e3e8ac292223183bc9568d8f6 on `android/embedded-node-poc`.
+          This diagnostic preview identifies which step fails after browser sign-in: callback validation, token exchange, token response validation, or encrypted credential storage. It removes the misleading generic subscription error. The underlying device failure has not yet been identified.
 
-          Download `pi-android-poc-arm64.apk` for ARM64 Android phones, including Nothing devices. Requires Android 8.0 or newer. This is a debug-signed preview build.
+          Download `pi-android-diagnostics-arm64.apk` for ARM64 Android phones, including Nothing devices. Requires Android 8.0 or newer. It installs separately as **Pi Durable Diagnostics**, so the original app and its data remain available. Try sign-in and report the new error message; never share callback URLs or tokens.
 
-          Validation passed: APK compilation, Android lint, TypeScript checks, all three runtime tests, and APK signature verification. Real Android hardware and live ChatGPT login/streaming have not yet been verified.
+          Validation passed: APK compilation, Android lint, TypeScript checks, runtime tests (including token-response and native-storage error isolation), and APK signature verification. Live ChatGPT login on Android still needs device verification.
 
           The APK was built on GitHub Actions. SHA-256 is recorded in the attached SHA256SUMS file.
           NOTES
-          gh release edit android-poc-preview-0.1.0 --repo mjf-89/pi --notes-file /tmp/preview-notes.md
+          gh release create android-poc-diagnostics-0.1.1 pi-android-diagnostics-arm64.apk SHA256SUMS --repo mjf-89/pi --target "$GITHUB_SHA" --prerelease --latest=false --title 'Android sign-in diagnostics 0.1.1' --notes-file /tmp/preview-notes.md

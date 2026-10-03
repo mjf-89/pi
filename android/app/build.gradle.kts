@@ -10,8 +10,14 @@ android {
         applicationId = "dev.pi.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-poc"
+        versionCode = 2
+        versionName = "0.1.1-poc"
+        if (providers.gradleProperty("diagnostic").orNull == "true") {
+            applicationIdSuffix = ".diagnostic"
+            resValue("string", "app_name", "Pi Durable Diagnostics")
+        } else {
+            resValue("string", "app_name", "Pi Durable")
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

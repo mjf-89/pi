@@ -64,7 +64,7 @@ class MainActivity : Activity() {
             }
             insets
         }
-        root.addView(text("Pi Durable", 28f).apply { setTypeface(null, Typeface.BOLD) })
+        root.addView(text(getString(R.string.app_name), 28f).apply { setTypeface(null, Typeface.BOLD) })
         status = text("Starting embedded Node…", 12f)
         root.addView(status)
         val controls = LinearLayout(this)
